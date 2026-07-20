@@ -10,6 +10,7 @@ import { syncCharacterBook, syncLocationBook } from './lib/worldInfoWriter.js';
 import { activateScenario, deactivateScenario } from './lib/scenarioBooks.js';
 import { resolveItemActive } from './lib/activationState.js';
 import { resolveCollectionMembers } from './lib/collectionResolver.js';
+import { createLocalCollection, renameLocalCollection, updateLocalCollectionMembers, deleteLocalCollection } from './lib/localCollections.js';
 
 const EXTENSION_BASE_PATH = resolveExtensionBasePath(import.meta.url);
 
@@ -133,17 +134,25 @@ async function initModal(settings) {
         collections: (await catalogCache.getCollections()) ?? [],
         lore: (await catalogCache.getLore()) ?? [],
     };
-    const resolvedCollections = buildResolvedCollections(settings, catalog);
+    // NOTE: no outer `resolvedCollections` snapshot here (fix #2, Task 8) --
+    // resolveActive/getItemDetail below each compute buildResolvedCollections
+    // fresh on every call instead, since modal.js calls them repeatedly
+    // without re-invoking initModal. `catalog` itself stays a single
+    // per-initModal-call snapshot; only the collections resolution derived
+    // from it needed to stop being snapshotted.
 
     /**
-     * Handles both onActivate and onDeactivate for every tab. Fix #1: branches
-     * by classifyItemKey so a collection-type itemKey writes
+     * Handles both onActivate and onDeactivate for every tab: branches by
+     * classifyItemKey so a collection-type itemKey writes
      * settings.collections[id].active (spec S9) instead of itemStates, and a
      * lore-type itemKey goes through activateScenario/deactivateScenario
-     * (spec S8) instead of itemStates+syncBooks. Fix #2: re-renders the modal
-     * afterward so the toggled card's state is visible immediately, per
-     * Task 16's own review concern that openModal has no built-in
-     * auto-refresh-after-toggle.
+     * (spec S8) instead of itemStates+syncBooks. Does NOT re-render the modal
+     * itself (Task 8 fix #1) -- lib/ui/modal.js's renderCurrentTab/openDetail
+     * wrappers already re-render immediately after calling onActivate/
+     * onDeactivate (fire-and-forget, no await -- see modal.js's own JSDoc on
+     * openModal). For the collection/item branches below, the relevant
+     * settings mutation happens synchronously before this function's first
+     * `await`, so that immediate re-render already sees the new state.
      * @param {string|number} itemKey
      * @param {boolean} makeActive
      */
@@ -176,20 +185,102 @@ async function initModal(settings) {
         }
 
         getStContext().saveSettingsDebounced();
+        // No re-render call here: lib/ui/modal.js's own renderCurrentTab/
+        // openDetail wrappers already re-render immediately after this
+        // function returns (see modal.js's own JSDoc on openModal for the
+        // full rationale). Re-invoking initModal/openModal here would reset
+        // the list/detail/form view back to 'list' on every toggle, fighting
+        // that self-managed re-render -- this was a real bug in the
+        // pre-redesign version of this function, found during Task 7's
+        // review, fixed here.
+    }
 
-        // Re-render (fix #2). openModal()'s own render always jumps back to
-        // the "character" tab, so remember whichever tab was actually being
-        // viewed and click back onto it once the fresh render lands -- this
-        // still only calls what modal.js already exposes (openModal, plus
-        // the .wreg-tab click handler it wires itself), no modal.js changes.
-        const overlay = document.getElementById('wreg-modal-overlay');
-        const previousType = overlay?.dataset.currentType;
-        await initModal(settings);
-        if (previousType && previousType !== 'character') {
-            document.getElementById('wreg-modal-overlay')
-                ?.querySelector(`.wreg-tab[data-type="${previousType}"]`)
-                ?.click();
+    /**
+     * Resolves the full detail-pane payload for a single itemKey. Computes
+     * its own fresh `resolvedCollections` snapshot on every call (same fix
+     * as `resolveActive` below) so a collection's own toggle is reflected
+     * immediately even though modal.js calls this repeatedly without
+     * re-invoking initModal.
+     * @param {string} itemKey
+     * @returns {import('./lib/ui/detailPane.js').ItemDetail & {memberKeys?: string[]}}
+     */
+    function getItemDetail(itemKey) {
+        const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call -- see Step 4's note
+        const routingKind = classifyItemKey(itemKey);
+
+        if (routingKind === 'lore') {
+            const loreId = String(itemKey).slice('lore:'.length);
+            const record = catalog.lore.find(l => String(l.loreId) === loreId) ?? {};
+            return {
+                itemKey, kind: 'lore', record,
+                isActive: !!settings.scenarioBooks[loreId]?.active,
+                forced: 'none',
+            };
         }
+        if (routingKind === 'collection') {
+            const key = String(itemKey);
+            const isLocal = !!settings.localCollections[key];
+            const record = isLocal
+                ? { name: settings.localCollections[key].name }
+                : (catalog.collections.find(c => String(c.collectionId) === key) ?? { name: key });
+            const memberKeys = resolvedCollections[key]?.memberKeys ?? [];
+            const allItems = [...catalog.characters, ...catalog.locations];
+            const memberNames = memberKeys
+                .map(k => allItems.find(i => i.itemKey === k)?.name)
+                .filter(Boolean);
+            return {
+                itemKey, kind: isLocal ? 'local' : 'collection', record,
+                isActive: !!resolvedCollections[key]?.active,
+                forced: 'none',
+                memberNames,
+                memberKeys,
+                isLocal,
+            };
+        }
+        // routingKind === 'item' -- classifyItemKey deliberately doesn't
+        // distinguish character vs. location (it only needs to for routing,
+        // where both go through the same tri-state path); detailFields.js's
+        // buildDetailFields DOES need that finer distinction, so derive it here
+        // via the itemKey's own prefix rather than widening classifyItemKey's
+        // job (found during Task 5/Task 7's review: passing classifyItemKey's
+        // 'item' straight through as the detail kind would make
+        // buildDetailFields silently return [] for every character and
+        // location -- the curated-fields feature would never show anything).
+        const detailKind = String(itemKey).startsWith('char:') ? 'character' : 'location';
+        const allItems = [...catalog.characters, ...catalog.locations];
+        const record = allItems.find(i => i.itemKey === itemKey) ?? {};
+        return {
+            itemKey, kind: detailKind, record,
+            isActive: resolveItemActive(itemKey, settings.itemStates, resolvedCollections),
+            forced: settings.itemStates[itemKey] ?? 'none',
+        };
+    }
+
+    function getAvailableItemsForForm() {
+        return [...catalog.characters, ...catalog.locations].map(r => ({ itemKey: r.itemKey, name: r.name }));
+    }
+
+    function onCreateLocalCollection(name, memberKeys) {
+        const id = createLocalCollection(settings, name, memberKeys);
+        settings.collections[id] = { active: false, source: 'local' };
+        getStContext().saveSettingsDebounced();
+    }
+
+    function onRenameLocalCollection(itemKey, name) {
+        renameLocalCollection(settings, itemKey, name);
+        getStContext().saveSettingsDebounced();
+    }
+
+    function onUpdateLocalCollectionMembers(itemKey, memberKeys) {
+        updateLocalCollectionMembers(settings, itemKey, memberKeys);
+        getStContext().saveSettingsDebounced();
+    }
+
+    async function onDeleteLocalCollection(itemKey) {
+        const wasActive = !!settings.collections[itemKey]?.active;
+        deleteLocalCollection(settings, itemKey);
+        if (wasActive) await syncBooks(settings);
+        getStContext().saveSettingsDebounced();
     }
 
     openModal({
@@ -202,6 +293,7 @@ async function initModal(settings) {
             return [];
         },
         resolveActive: (itemKey) => {
+            const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call, not the outer initModal-scoped snapshot
             const kind = classifyItemKey(itemKey);
             if (kind === 'lore') return !!settings.scenarioBooks[String(itemKey).slice('lore:'.length)]?.active;
             if (kind === 'collection') return !!resolvedCollections[String(itemKey)]?.active;
@@ -224,6 +316,12 @@ async function initModal(settings) {
                 console.error('[Weyland-Registrar] Manual catalog refresh failed:', error);
             }
         },
+        getItemDetail,
+        getAvailableItemsForForm,
+        onCreateLocalCollection,
+        onRenameLocalCollection,
+        onUpdateLocalCollectionMembers,
+        onDeleteLocalCollection,
     });
 }
 
