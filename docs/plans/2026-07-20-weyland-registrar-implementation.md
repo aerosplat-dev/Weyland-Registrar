@@ -190,7 +190,6 @@ export const MODULE_NAME = 'Weyland-Registrar';
  * @property {Object.<string, 'active'|'inactive'>} itemStates - itemKey -> forced override
  * @property {Object.<string, {active: boolean, source: 'registrar'|'local'}>} collections
  * @property {Object.<string, {name: string, memberKeys: string[]}>} localCollections
- * @property {Object.<string, {uids: number[], book: string}>} itemOwnership
  * @property {Object.<string, {book: string, active: boolean}>} scenarioBooks - loreId -> book state
  */
 export const defaultSettings = {
@@ -199,7 +198,6 @@ export const defaultSettings = {
     itemStates: {},
     collections: {},
     localCollections: {},
-    itemOwnership: {},
     scenarioBooks: {},
 };
 
@@ -368,7 +366,7 @@ git commit -m "Add activation-state resolution (tri-state override + collection 
 - Test: `test/uidScheme.test.js`
 
 **Interfaces:**
-- Produces: `characterEntryUids(characterId): {info, backstory, secrets, room, end}`, `locationEntryUids(locationId, subLocationCount): {info, subLocations: number[]}`, `ROSTER_UID = 5000`, `LOCATION_LIST_UID = 8000`. Used by Task 12 (entry builder) to assign uids and Task 13 (World Info writer) to know which uids to remove on deactivation.
+- Produces: `characterEntryUids(characterId): {info, backstory, secrets, room, end}`, `locationEntryUids(locationId, subLocationCount): {info, subLocations: number[]}`, `ROSTER_UID = 5000`, `LOCATION_LIST_UID = 8000`. Used by Task 12 (entry builder) to assign uids, and by Task 13 (World Info writer) indirectly via Task 12 -- Task 13 itself never needs to track which uids to remove, since it fully rebuilds each managed book's entries from the complete active set on every sync rather than diffing against a persisted mapping (see Task 13's own notes).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1795,6 +1793,7 @@ git commit -m "Add entry builder orchestration (sandbox call + deterministic uid
 **Interfaces:**
 - Consumes: an injectable `stContext` object matching the subset of `getContext()` this module needs (`loadWorldInfo`, `saveWorldInfo`, `updateWorldInfoList`, `executeSlashCommandsWithOptions`); `resolveAllActive` (Task 3); `buildCharacterRosterText`/`buildLocationListText` (Task 5); `buildCharacterEntries`/`buildLocationEntries` (Task 12); `ROSTER_UID`/`LOCATION_LIST_UID` (Task 4).
 - Produces: `syncCharacterBook(stContext, callFunction, settings, allCharacterRecordsByKey): Promise<void>`, `syncLocationBook(stContext, callFunction, settings, allLocationRecordsByKey): Promise<void>`. Task 17 (extension boot) calls these after every activation-state change.
+- **Design note (settled during pre-flight review):** both functions fully rebuild the managed book's `entries` object from the complete active set on every call -- they never diff against a persisted uid-ownership mapping. This is deliberately simpler and self-healing (no risk of a stale/corrupted mapping silently leaving orphaned entries behind); it also means `settings.itemOwnership`, described in an earlier draft of this plan, was removed as unnecessary write-only state before implementation began.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1913,7 +1912,7 @@ Expected: FAIL — module does not exist.
 import { resolveAllActive } from './activationState.js';
 import { buildCharacterRosterText, buildLocationListText } from './rosterBuilder.js';
 import { buildCharacterEntries, buildLocationEntries } from './entryBuilder.js';
-import { ROSTER_UID, LOCATION_LIST_UID, characterEntryUids, locationEntryUids } from './uidScheme.js';
+import { ROSTER_UID, LOCATION_LIST_UID } from './uidScheme.js';
 
 export const CHARACTER_BOOK_NAME = 'Lore Book - Weyland Registrar';
 export const LOCATION_BOOK_NAME = 'World Book - Community Locations';
@@ -1968,7 +1967,6 @@ export async function syncCharacterBook(stContext, callFunction, settings, allCh
     };
 
     await writeAndActivate(stContext, CHARACTER_BOOK_NAME, { entries });
-    updateOwnership(settings, activeKeys, allCharacterRecordsByKey, characterEntryUids, CHARACTER_BOOK_NAME);
 }
 
 /**
@@ -2004,7 +2002,6 @@ export async function syncLocationBook(stContext, callFunction, settings, allLoc
     };
 
     await writeAndActivate(stContext, LOCATION_BOOK_NAME, { entries });
-    updateOwnership(settings, activeKeys, allLocationRecordsByKey, (id, count) => locationEntryUids(id, 0), LOCATION_BOOK_NAME);
 }
 
 /**
@@ -2021,19 +2018,6 @@ function resolveCollectionsForActivation(settings) {
         result[id] = { active: !!collection.active, memberKeys: collection.memberKeys ?? [] };
     }
     return result;
-}
-
-function updateOwnership(settings, activeKeys, recordsByKey, uidFn, bookName) {
-    for (const key of activeKeys) {
-        const id = key.split(':')[1];
-        const uids = uidFn(id);
-        settings.itemOwnership[key] = { uids: Object.values(uids).flat(), book: bookName };
-    }
-    for (const key of Object.keys(settings.itemOwnership)) {
-        if (settings.itemOwnership[key].book === bookName && !activeKeys.has(key)) {
-            delete settings.itemOwnership[key];
-        }
-    }
 }
 ```
 
@@ -2697,7 +2681,7 @@ git commit -m "Wire extension boot: settings drawer, toolbar button, catalog ref
 - §8 (content types, roster/location-list invariant, uid schemes) → Tasks 4, 5, 13, 14.
 - §9 (activation model) → Task 3.
 - §10 (local collections) → Task 6.
-- §11 (ownership model) → Task 13's `updateOwnership`.
+- §11 (ownership model) → Task 13's full-rebuild-from-active-set contract (superseding §11's original mapping-based description; both `settings.itemOwnership` and `updateOwnership` were removed as dead code during pre-flight review, confirmed with the user -- the full rebuild achieves exclusive-ownership behavior more robustly without needing a persisted uid mapping).
 - §12 (security rationale) → Task 11's design, documented inline.
 - §13 + §13.1 (UI, WI panel entry point) → Tasks 15, 16.
 - §14 (two-tier caching) → Task 10.

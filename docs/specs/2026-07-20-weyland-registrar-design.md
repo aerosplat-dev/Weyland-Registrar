@@ -195,12 +195,17 @@ is not a separate code path from a Registrar collection.
 ## 11. Ownership model
 
 The two shared managed books, and each per-scenario book, are treated as **fully owned by this
-extension**. The extension tracks its own mapping of registrar `characterId`/`locationId` →
-which uids it placed in which file, and uses that mapping (not a scan of file contents) to decide
-what to add/remove. Manual edits a user makes directly in SillyTavern's own World Info editor to
-these specific files are not preserved across the extension's own add/remove operations — this is
-called out explicitly as a known tradeoff, matching how Weyland-LTM already owns its per-chat
-book exclusively.
+extension**. Rather than tracking a persisted uid-ownership mapping and diffing against it,
+the shared books are **fully rebuilt from the complete active set on every sync** — the entries
+object is regenerated from scratch each time (recomputing each active item's entries and the one
+consolidated roster/location-list entry) and the result fully replaces the book via
+`saveWorldInfo`. This was refined during implementation planning: a persisted mapping would have
+been pure write-only bookkeeping with no functional role once full-rebuild was chosen, and
+full-rebuild is more robust besides (self-healing, no risk of a stale/corrupted mapping silently
+leaving orphaned entries behind). Manual edits a user makes directly in SillyTavern's own World
+Info editor to these specific files are not preserved across a sync — this is called out
+explicitly as a known tradeoff, matching how Weyland-LTM already owns its per-chat book
+exclusively.
 
 ## 12. Security consideration: live execution of Registrar's `base.js`
 
