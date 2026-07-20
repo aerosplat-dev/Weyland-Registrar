@@ -226,6 +226,37 @@ inactive / forced-override state indicators so the resolution logic in §9 is ne
 the user. A standard `#extensions_settings2` drawer handles lighter config (API base URL
 override, refresh interval).
 
+### 13.1 Entry point: World Info panel toolbar button
+
+The modal opens from a new button in SillyTavern's World Info panel (`#WorldInfo`), the same
+pattern Weyland-Router already uses for its own Connection Manager panel button — a `.menu_button`
+div, injected on extension init via a `setInterval` poll (matching Router's
+`injectToolbarButton()`: poll every 500ms for the anchor element, up to a ~10s ceiling, de-dupe on
+a unique button id so repeated init/hot-reload never double-inserts).
+
+**Anchor:** appended after `#world_refresh` (end of the toolbar's second `flex-container` row, in
+`#world_popup`), not absolutely-positioned into the panel's literal top-right corner. This was a
+deliberate deviation from a literal reading of "top right," confirmed by reading both
+Weyland-Router's own injection code and the Streamlined UI extension's actual patches:
+
+- Streamlined UI (`public/scripts/extensions/streamlined-ui/`) already places its own "Advanced
+  Options" toggle at the literal top-right corner of `#WorldInfo`
+  (`position:absolute; right:0.5em; top:0.6em`) — putting our button there too would visually
+  collide with it whenever that extension is enabled.
+- Its only patch touching `#WorldInfo` is that one `INSERT`; the toolbar rows themselves are never
+  restructured, only individual buttons within them are conditionally hidden via a
+  `#WorldInfo:not(:has(#wi-advanced-options-checkbox:checked)) { ... }` CSS rule keyed on a fixed
+  id/selector list (`#world_duplicate`, `#world_backfill_memos`, `#world_create_button`,
+  `#world_popup_new`, and several entry-editor-internal selectors).
+- `#world_refresh` and `#world_info_pagination` (the toolbar's last two items, where a new button
+  would naturally be appended) are **not** in that hidden-selector list, and are never touched by
+  any other patch — confirmed by reading `patches.json` and `style.css` directly, not assumed.
+
+Because of this, a single injection point (unlike Router, which needs a second, differently-placed
+launcher specifically because Streamlined UI *does* affect its Connection Manager anchor) is
+sufficient here — the same button renders correctly, unobscured, in both standard SillyTavern UI
+and with Streamlined UI enabled, without any extension-specific branching in the injection code.
+
 ## 14. Caching & refresh
 
 Two different storage tiers, not one — this distinction matters because `extensionSettings` is
