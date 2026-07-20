@@ -91,32 +91,38 @@ async function syncBooks(settings) {
  *    lib/activationState.js (spec S9): settings.itemStates[itemKey].
  *  - "local:" prefix (always, by construction -- see
  *    lib/localCollections.js's createLocalCollection) -> a local collection.
- *  - otherwise, a match by id in the cached lore list -> a scenario/lore
- *    item. Per spec S8, lore/scenarios activate via their OWN dedicated
- *    whole-book mechanism (lib/scenarioBooks.js's activateScenario/
- *    deactivateScenario) -- never itemStates, never settings.collections.
- *    (The brief's original reference index.js routed every itemKey through
- *    the generic itemStates+syncBooks path, which would silently never
- *    create/activate a scenario's dedicated Lore Book at all -- a real gap,
- *    caught by cross-checking spec S8 and lib/scenarioBooks.js directly.)
+ *  - "lore:" prefix (this module's own getItemsForType('lore') below, which
+ *    mints `lore:${l.loreId}`) -> a scenario/lore item. Per spec S8, lore/
+ *    scenarios activate via their OWN dedicated whole-book mechanism
+ *    (lib/scenarioBooks.js's activateScenario/deactivateScenario) -- never
+ *    itemStates, never settings.collections. (The brief's original reference
+ *    index.js routed every itemKey through the generic itemStates+syncBooks
+ *    path, which would silently never create/activate a scenario's dedicated
+ *    Lore Book at all -- a real gap, caught by cross-checking spec S8 and
+ *    lib/scenarioBooks.js directly.)
  *  - otherwise -> a Registrar collection id: settings.collections[id].active
  *    (spec S9's collection-level active flag, distinct from itemStates).
  *
  * Registrar collectionId and loreId are both raw, unprefixed ids drawn from
- * two independent id spaces on the Registrar (see getItemsForType below); a
- * same-value collision between them is a pre-existing ambiguity in how
- * Task 16's modal itemKey scheme represents those two tabs, not something
- * introduced here. Lore is checked first since it is the narrower, more
+ * two independent id spaces on the Registrar -- nothing stops a collection
+ * and a lore item from sharing the same raw id value. getItemsForType('lore')
+ * below prefixes its itemKey with "lore:" (matching the char:/loc:/local:
+ * convention) specifically so this classification is an unambiguous prefix
+ * check with zero collision risk against a same-valued collectionId; only
+ * lib/scenarioBooks.js's OWN internal keying (settings.scenarioBooks,
+ * catalog.lore lookups) still uses the raw loreId, so every call site here
+ * that classifies a key as 'lore' must strip the "lore:" prefix before using
+ * it to look up a lore record or index into settings.scenarioBooks. Lore is
+ * checked before the collection fallback since it is the narrower, more
  * specific mechanism.
  * @param {string|number} itemKey
- * @param {{lore?: object[]}} catalog
  * @returns {'item'|'lore'|'collection'}
  */
-function classifyItemKey(itemKey, catalog) {
+function classifyItemKey(itemKey) {
     const key = String(itemKey);
     if (key.startsWith('char:') || key.startsWith('loc:')) return 'item';
     if (key.startsWith('local:')) return 'collection';
-    if ((catalog.lore ?? []).some(l => String(l.loreId) === key)) return 'lore';
+    if (key.startsWith('lore:')) return 'lore';
     return 'collection';
 }
 
@@ -142,10 +148,11 @@ async function initModal(settings) {
      * @param {boolean} makeActive
      */
     async function handleToggle(itemKey, makeActive) {
-        const kind = classifyItemKey(itemKey, catalog);
+        const kind = classifyItemKey(itemKey);
 
         if (kind === 'lore') {
-            const loreRecord = catalog.lore.find(l => String(l.loreId) === String(itemKey));
+            const loreId = String(itemKey).slice('lore:'.length);
+            const loreRecord = catalog.lore.find(l => String(l.loreId) === loreId);
             if (loreRecord) {
                 const stContext = getStContext();
                 if (makeActive) {
@@ -190,13 +197,13 @@ async function initModal(settings) {
             if (type === 'character') return catalog.characters;
             if (type === 'location') return catalog.locations;
             if (type === 'collection') return catalog.collections.map(c => ({ itemKey: c.collectionId, name: c.name, summary: c.summary }));
-            if (type === 'lore') return catalog.lore.map(l => ({ itemKey: l.loreId, name: l.name, summary: l.summary }));
+            if (type === 'lore') return catalog.lore.map(l => ({ itemKey: `lore:${l.loreId}`, name: l.name, summary: l.summary }));
             if (type === 'local') return Object.entries(settings.localCollections).map(([id, c]) => ({ itemKey: id, name: c.name }));
             return [];
         },
         resolveActive: (itemKey) => {
-            const kind = classifyItemKey(itemKey, catalog);
-            if (kind === 'lore') return !!settings.scenarioBooks[String(itemKey)]?.active;
+            const kind = classifyItemKey(itemKey);
+            if (kind === 'lore') return !!settings.scenarioBooks[String(itemKey).slice('lore:'.length)]?.active;
             if (kind === 'collection') return !!resolvedCollections[String(itemKey)]?.active;
             return resolveItemActive(itemKey, settings.itemStates, resolvedCollections);
         },
@@ -204,7 +211,7 @@ async function initModal(settings) {
             // Only individual characters/locations carry a forced tri-state
             // override (spec S9) -- collections and lore/scenario items have
             // no forced concept, so they never show a "Pinned" badge.
-            return classifyItemKey(itemKey, catalog) === 'item' ? (settings.itemStates[itemKey] ?? 'none') : 'none';
+            return classifyItemKey(itemKey) === 'item' ? (settings.itemStates[itemKey] ?? 'none') : 'none';
         },
         onActivate: (itemKey) => handleToggle(itemKey, true),
         onDeactivate: (itemKey) => handleToggle(itemKey, false),
@@ -257,7 +264,20 @@ jQuery(async () => {
     catalogCache = createCatalogCache(createIndexedDbStorageEngine());
 
     await addExtensionSettings(settings);
-    injectToolbarButton(() => initModal(settings));
+    injectToolbarButton(() => {
+        (async () => {
+            try {
+                await initModal(settings);
+            } catch (error) {
+                // injectToolbarButton's click handler calls this callback
+                // fire-and-forget (no await/catch of its own) -- without this
+                // wrapper, a rejected initModal (e.g. an IndexedDB read
+                // failure, or a template-fetch failure inside openModal)
+                // would become an unhandled promise rejection.
+                console.error('[Weyland-Registrar] Opening modal failed:', error);
+            }
+        })();
+    });
 
     try {
         if (!(await catalogCache.getCharacters()) || await isCatalogStale(settings)) {
