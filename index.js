@@ -209,9 +209,13 @@ async function initModal(settings) {
         onActivate: (itemKey) => handleToggle(itemKey, true),
         onDeactivate: (itemKey) => handleToggle(itemKey, false),
         onRefreshCatalog: async () => {
-            await refreshCatalog(settings);
-            await syncBooks(settings);
-            await initModal(settings);
+            try {
+                await refreshCatalog(settings);
+                await syncBooks(settings);
+                await initModal(settings);
+            } catch (error) {
+                console.error('[Weyland-Registrar] Manual catalog refresh failed:', error);
+            }
         },
     });
 }
@@ -230,6 +234,23 @@ async function addExtensionSettings(settings) {
     });
 }
 
+/**
+ * True if the cache is empty, or older than settings.refreshIntervalMinutes
+ * (spec S14: the setting exists specifically to drive this cadence check --
+ * lib/catalogCache.js's getLastRefreshed() has no other caller anywhere in
+ * the plan, and refreshIntervalMinutes was otherwise only ever read/written
+ * by the settings-drawer binding, never actually consulted -- a dead setting
+ * otherwise).
+ * @param {import('./lib/settings.js').WeylandRegistrarSettings} settings
+ * @returns {Promise<boolean>}
+ */
+async function isCatalogStale(settings) {
+    const lastRefreshed = await catalogCache.getLastRefreshed();
+    if (!lastRefreshed) return true;
+    const intervalMinutes = Number(settings.refreshIntervalMinutes) > 0 ? Number(settings.refreshIntervalMinutes) : 60;
+    return Date.now() - lastRefreshed >= intervalMinutes * 60 * 1000;
+}
+
 jQuery(async () => {
     const context = getStContext();
     const settings = getSettings(context.extensionSettings);
@@ -238,7 +259,16 @@ jQuery(async () => {
     await addExtensionSettings(settings);
     injectToolbarButton(() => initModal(settings));
 
-    if (!(await catalogCache.getCharacters())) {
-        await refreshCatalog(settings);
+    try {
+        if (!(await catalogCache.getCharacters()) || await isCatalogStale(settings)) {
+            await refreshCatalog(settings);
+        }
+    } catch (error) {
+        // A Registrar-unreachable first boot shouldn't leave an unhandled
+        // rejection behind (jQuery() calls this callback fire-and-forget,
+        // it never awaits/catches it) -- the toolbar button and modal
+        // remain usable either way, and the modal's own "Refresh Catalog"
+        // button (below) can retry once the Registrar is reachable again.
+        console.error('[Weyland-Registrar] Initial catalog refresh failed:', error);
     }
 });
