@@ -1476,11 +1476,15 @@ git commit -m "Rewrite modal.js: portal mount fix, list/detail/form view-state, 
 ## Task 8: index.js additions (getItemDetail, local-collection handlers)
 
 **Files:**
-- Modify: `index.js` (additive changes only)
+- Modify: `index.js` (mostly additive, plus two required corrections to existing code — see Steps 2 and 4)
 
 **Interfaces:**
-- Consumes: everything already imported, plus `createLocalCollection`/`renameLocalCollection`/`updateLocalCollectionMembers`/`deleteLocalCollection` (existing, `lib/localCollections.js`, previously unimported).
+- Consumes: everything already imported, plus `createLocalCollection`/`renameLocalCollection`/`updateLocalCollectionMembers`/`deleteLocalCollection` (existing, `lib/localCollections.js`, previously unimported). Also consumes the REAL, current `classifyItemKey(itemKey)` — read `index.js` directly before writing this task's code; it takes exactly one argument and already returns `'item'` (not `'character'`/`'location'` specifically) for any `char:`/`loc:` key, `'collection'` for `local:`-prefixed or unrecognized keys, and `'lore'` for `lore:`-prefixed keys. Do not change `classifyItemKey` itself — it is already correct for routing and already reviewed; this task only needs a finer distinction *in addition to* its routing result, derived separately.
 - Produces: the extended `state` shape `openModal` now expects (Task 7). No unit test (integration wiring, browser-only, matching this project's established pattern for `index.js`).
+
+**Two corrections required to already-existing code, found during Task 7's review (not new-feature bugs — real integration-breaking issues that must be fixed as part of this task):**
+1. **`handleToggle` must stop re-invoking `initModal`/`openModal` as its own refresh mechanism.** The current `handleToggle` ends with `await initModal(settings)` plus DOM lookups against `#wreg-modal-overlay`/`.dataset.currentType` — both target the *pre-redesign* modal structure. Task 7's new `modal.js` already re-renders itself immediately after `onActivate`/`onDeactivate` return (see its own JSDoc on `openModal`), and its `openModal` unconditionally resets the list/detail/form view to `'list'` on every call — so leaving `handleToggle`'s own re-invocation in place would silently snap any open detail/form view back to the list every time a character/location/collection is toggled anywhere, including from inside the very detail pane the user has open. Remove the re-invocation entirely (just the settings mutation + `syncBooks`/`activateScenario`/`deactivateScenario` call + `saveSettingsDebounced()`; no re-render call of any kind here — that's `modal.js`'s job now).
+2. **`resolveActive`/`getItemDetail`'s collection-membership resolution must not read a snapshot computed once per `initModal` call.** The current `resolveActive` closes over a `resolvedCollections` object built once at the top of `initModal(settings)`. Because `modal.js` now calls `resolveActive`/`getItemDetail` repeatedly *without* re-invoking `initModal`, a collection's own toggle (which mutates `settings.collections[key]`) would not be reflected in an immediate re-render — the closed-over snapshot still shows the pre-toggle value. (Character/location toggles are unaffected: their forced-override state lives directly in `settings.itemStates`, read live, never snapshotted.) Fix: call `buildResolvedCollections(settings, catalog)` fresh, inline, every time `resolveActive`/`getItemDetail` actually runs — not once outside them. `catalog` itself (the raw fetched records) is fine to keep as a single per-`initModal`-call snapshot; only the *collections resolution derived from it* needs to be recomputed on every call, since only that derived data can go stale between renders.
 
 - [ ] **Step 1: Add the import**
 
@@ -1490,37 +1494,75 @@ In `index.js`, add to the existing import list:
 import { createLocalCollection, renameLocalCollection, updateLocalCollectionMembers, deleteLocalCollection } from './lib/localCollections.js';
 ```
 
-- [ ] **Step 2: Add `getItemDetail` and the local-collection handlers inside `initModal`**
+- [ ] **Step 2: Fix `handleToggle` (remove its own re-invocation of `initModal`)**
 
-Add these functions inside `initModal(settings)` (alongside the existing `handleToggle`), and add the five new keys to the object passed to `openModal(...)`:
+Replace the existing `handleToggle` function's ending. It currently looks like this (verify against the real file — this is what it should look like *before* your edit):
+
+```js
+        getStContext().saveSettingsDebounced();
+
+        // Re-render (fix #2). openModal()'s own render always jumps back to
+        // the "character" tab, so remember whichever tab was actually being
+        // viewed and click back onto it once the fresh render lands -- this
+        // still only calls what modal.js already exposes (openModal, plus
+        // the .wreg-tab click handler it wires itself), no modal.js changes.
+        const overlay = document.getElementById('wreg-modal-overlay');
+        const previousType = overlay?.dataset.currentType;
+        await initModal(settings);
+        if (previousType && previousType !== 'character') {
+            document.getElementById('wreg-modal-overlay')
+                ?.querySelector(`.wreg-tab[data-type="${previousType}"]`)
+                ?.click();
+        }
+    }
+```
+
+Replace it with:
+
+```js
+        getStContext().saveSettingsDebounced();
+        // No re-render call here: lib/ui/modal.js's own renderCurrentTab/
+        // openDetail wrappers already re-render immediately after this
+        // function returns (see modal.js's own JSDoc on openModal for the
+        // full rationale). Re-invoking initModal/openModal here would reset
+        // the list/detail/form view back to 'list' on every toggle, fighting
+        // that self-managed re-render -- this was a real bug in the
+        // pre-redesign version of this function, found during Task 7's
+        // review, fixed here.
+    }
+```
+
+- [ ] **Step 3: Add `getItemDetail` and the local-collection handlers inside `initModal`**
+
+Add these functions inside `initModal(settings)` (alongside `handleToggle`), and add the five new keys to the object passed to `openModal(...)`:
 
 ```js
 function getItemDetail(itemKey) {
-    const kind = classifyItemKey(itemKey, catalog);
-    if (kind === 'lore') {
+    const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call -- see Step 4's note
+    const routingKind = classifyItemKey(itemKey);
+
+    if (routingKind === 'lore') {
         const loreId = String(itemKey).slice('lore:'.length);
-        const record = catalog.lore.find(l => String(l.loreId) === loreId);
+        const record = catalog.lore.find(l => String(l.loreId) === loreId) ?? {};
         return {
-            itemKey, kind, record,
+            itemKey, kind: 'lore', record,
             isActive: !!settings.scenarioBooks[loreId]?.active,
             forced: 'none',
         };
     }
-    if (kind === 'collection') {
+    if (routingKind === 'collection') {
         const key = String(itemKey);
         const isLocal = !!settings.localCollections[key];
         const record = isLocal
             ? { name: settings.localCollections[key].name }
             : (catalog.collections.find(c => String(c.collectionId) === key) ?? { name: key });
-        const memberKeys = isLocal
-            ? settings.localCollections[key].memberKeys
-            : resolveCollectionMembers(catalog.collections.find(c => String(c.collectionId) === key) ?? {}, catalog);
+        const memberKeys = resolvedCollections[key]?.memberKeys ?? [];
         const allItems = [...catalog.characters, ...catalog.locations];
         const memberNames = memberKeys
             .map(k => allItems.find(i => i.itemKey === k)?.name)
             .filter(Boolean);
         return {
-            itemKey, kind, record,
+            itemKey, kind: isLocal ? 'local' : 'collection', record,
             isActive: !!resolvedCollections[key]?.active,
             forced: 'none',
             memberNames,
@@ -1528,10 +1570,20 @@ function getItemDetail(itemKey) {
             isLocal,
         };
     }
+    // routingKind === 'item' -- classifyItemKey deliberately doesn't
+    // distinguish character vs. location (it only needs to for routing,
+    // where both go through the same tri-state path); detailFields.js's
+    // buildDetailFields DOES need that finer distinction, so derive it here
+    // via the itemKey's own prefix rather than widening classifyItemKey's
+    // job (found during Task 5/Task 7's review: passing classifyItemKey's
+    // 'item' straight through as the detail kind would make
+    // buildDetailFields silently return [] for every character and
+    // location -- the curated-fields feature would never show anything).
+    const detailKind = String(itemKey).startsWith('char:') ? 'character' : 'location';
     const allItems = [...catalog.characters, ...catalog.locations];
     const record = allItems.find(i => i.itemKey === itemKey) ?? {};
     return {
-        itemKey, kind, record,
+        itemKey, kind: detailKind, record,
         isActive: resolveItemActive(itemKey, settings.itemStates, resolvedCollections),
         forced: settings.itemStates[itemKey] ?? 'none',
     };
@@ -1541,35 +1593,47 @@ function getAvailableItemsForForm() {
     return [...catalog.characters, ...catalog.locations].map(r => ({ itemKey: r.itemKey, name: r.name }));
 }
 
-async function persistAndRefresh() {
-    getStContext().saveSettingsDebounced();
-}
-
 function onCreateLocalCollection(name, memberKeys) {
     const id = createLocalCollection(settings, name, memberKeys);
     settings.collections[id] = { active: false, source: 'local' };
-    persistAndRefresh();
+    getStContext().saveSettingsDebounced();
 }
 
 function onRenameLocalCollection(itemKey, name) {
     renameLocalCollection(settings, itemKey, name);
-    persistAndRefresh();
+    getStContext().saveSettingsDebounced();
 }
 
 function onUpdateLocalCollectionMembers(itemKey, memberKeys) {
     updateLocalCollectionMembers(settings, itemKey, memberKeys);
-    persistAndRefresh();
+    getStContext().saveSettingsDebounced();
 }
 
 async function onDeleteLocalCollection(itemKey) {
     const wasActive = !!settings.collections[itemKey]?.active;
     deleteLocalCollection(settings, itemKey);
     if (wasActive) await syncBooks(settings);
-    persistAndRefresh();
+    getStContext().saveSettingsDebounced();
 }
 ```
 
-- [ ] **Step 3: Pass the five new functions into `openModal`'s state object**
+- [ ] **Step 4: Fix `resolveActive` to compute `resolvedCollections` fresh (not the closure-captured one)**
+
+The existing `resolveActive` (inside the `openModal({...})` call) currently reads the `resolvedCollections` variable computed once near the top of `initModal`. Change it to compute its own fresh copy on every call:
+
+```js
+        resolveActive: (itemKey) => {
+            const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call, not the outer initModal-scoped snapshot
+            const kind = classifyItemKey(itemKey);
+            if (kind === 'lore') return !!settings.scenarioBooks[String(itemKey).slice('lore:'.length)]?.active;
+            if (kind === 'collection') return !!resolvedCollections[String(itemKey)]?.active;
+            return resolveItemActive(itemKey, settings.itemStates, resolvedCollections);
+        },
+```
+
+`resolveForced` needs no change — it already reads `settings.itemStates` directly (live, never snapshotted). The outer `resolvedCollections` variable computed near the top of `initModal` is no longer read by `resolveActive`/`getItemDetail` after this change; leave the `catalog` variable itself as-is (still a valid single-fetch-per-`initModal`-call snapshot — only the *derived collections resolution* needed to stop being snapshotted).
+
+- [ ] **Step 5: Pass the five new functions into `openModal`'s state object**
 
 In the existing `openModal({...})` call inside `initModal`, add:
 
@@ -1579,24 +1643,24 @@ In the existing `openModal({...})` call inside `initModal`, add:
     onCreateLocalCollection,
     onRenameLocalCollection,
     onUpdateLocalCollectionMembers,
-    onDeleteLocalCollection: onDeleteLocalCollection,
+    onDeleteLocalCollection,
 ```
 
-- [ ] **Step 4: Verify no syntax errors**
+- [ ] **Step 6: Verify no syntax errors**
 
 Run: `node --check index.js`
 Expected: no output (syntax OK).
 
-- [ ] **Step 5: Run the full existing unit suite to confirm no regressions**
+- [ ] **Step 7: Run the full existing unit suite to confirm no regressions**
 
 Run: `node --test test/*.test.js`
 Expected: PASS (all existing tests, unaffected — `index.js` has no unit tests of its own).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add index.js
-git commit -m "Wire local-collection create/rename/edit-members/delete and getItemDetail"
+git commit -m "Wire local-collection create/rename/edit-members/delete and getItemDetail; fix stale collection-resolution snapshot and remove incompatible re-render call"
 ```
 
 ---
