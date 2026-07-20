@@ -61,3 +61,32 @@ test('matchesTerms: multiple terms are ANDed together', () => {
         { prop: 'owner', value: 'someoneelse', negate: false },
     ]), false);
 });
+
+test('multiple quoted phrases in one search string are each captured separately', () => {
+    const terms = parseSearchTerms('"cat girl" fluffy "blue eyes"');
+    assert.deepEqual(terms, [
+        { prop: 'master', value: 'fluffy', negate: false },
+        { prop: 'master', value: 'cat girl', negate: false },
+        { prop: 'master', value: 'blue eyes', negate: false },
+    ]);
+});
+
+test('matchesTerms: affirmative term with pipe-delimited value matches any piped option', () => {
+    const blob = { species: 'kitsune' };
+    assert.equal(matchesTerms(blob, [
+        { prop: 'species', value: 'neko|kitsune', negate: false },
+    ]), true);
+    assert.equal(matchesTerms(blob, [
+        { prop: 'species', value: 'neko|fox', negate: false },
+    ]), false);
+});
+
+test('matchesTerms: negated term with pipe-delimited value fails if blob contains any piped option', () => {
+    const blob = { species: 'kitsune' };
+    assert.equal(matchesTerms(blob, [
+        { prop: 'species', value: 'neko|kitsune', negate: true },
+    ]), false);
+    assert.equal(matchesTerms(blob, [
+        { prop: 'species', value: 'neko|fox', negate: true },
+    ]), true);
+});
