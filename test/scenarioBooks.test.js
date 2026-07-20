@@ -47,3 +47,33 @@ test('deactivateScenario turns the book off without deleting it', async () => {
     assert.equal(settings.scenarioBooks['1'].active, false);
     assert.ok(stContext.books['Lore Book - The Venture'], 'file is kept on disk, not deleted');
 });
+
+test('reactivating a deactivated scenario reuses the book without rebuilding', async () => {
+    const stContext = fakeStContext();
+    let buildRosterEntryCallCount = 0;
+    const callFunction = async (name) => {
+        if (name === 'buildRosterEntry') {
+            buildRosterEntryCallCount++;
+            return { uid: 5000, comment: 'Character Roster', content: 'x' };
+        }
+        throw new Error(`Unexpected: ${name}`);
+    };
+    const settings = { scenarioBooks: {} };
+    const loreRecord = { loreId: '1', name: 'The Venture', greeting: 'Welcome.' };
+
+    // First activation: should build the book
+    await activateScenario(stContext, callFunction, settings, loreRecord);
+    assert.equal(buildRosterEntryCallCount, 1, 'first activation calls buildRosterEntry');
+    assert.equal(settings.scenarioBooks['1'].active, true);
+
+    // Deactivate: keeps the book on disk
+    await deactivateScenario(stContext, settings, loreRecord);
+    assert.equal(settings.scenarioBooks['1'].active, false);
+    assert.ok(stContext.books['Lore Book - The Venture'], 'book file is preserved');
+
+    // Second activation: should reuse the book WITHOUT rebuilding
+    await activateScenario(stContext, callFunction, settings, loreRecord);
+    assert.equal(buildRosterEntryCallCount, 1, 'second activation does NOT call buildRosterEntry again');
+    assert.equal(settings.scenarioBooks['1'].active, true, 'book is active again');
+    assert.ok(stContext.commands.some(cmd => cmd.includes('state=on') && cmd.includes('Lore Book - The Venture')), 'state=on command issued on reactivation');
+});
