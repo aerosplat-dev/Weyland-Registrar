@@ -1,17 +1,41 @@
-<div id="wreg-modal-overlay" class="wreg-modal-overlay">
-  <div class="wreg-modal-window">
-    <div class="wreg-modal-header">
-      <div class="wreg-tab-bar">
-        <div class="wreg-tab" data-type="character">Characters</div>
-        <div class="wreg-tab" data-type="location">Locations</div>
-        <div class="wreg-tab" data-type="collection">Collections</div>
-        <div class="wreg-tab" data-type="lore">Lore</div>
-        <div class="wreg-tab" data-type="local">My Local Collections</div>
-      </div>
-      <input type="search" id="wreg-search" placeholder="Search... (species:neko owner:name)">
-      <div id="wreg-refresh-catalog" class="menu_button fa-solid fa-arrows-rotate" title="Refresh Catalog"></div>
-      <div id="wreg-modal-close" class="menu_button fa-solid fa-xmark"></div>
+<div class="wreg-portal" id="wreg-portal">
+  <div class="wreg-modal-window" id="wreg-modal-window" style="display:none;">
+    <div class="wreg-titlebar" id="wreg-titlebar">
+      <span class="wreg-wordmark">WEYLAND REGISTRAR</span>
+      <button type="button" class="wreg-btn-icon" id="wreg-back-btn" title="Back to list" style="display:none;">&#8592;</button>
+      <div class="wreg-titlebar-spacer"></div>
+      <button type="button" class="wreg-btn-icon" id="wreg-refresh-catalog" title="Refresh Catalog">&#8635;</button>
+      <button type="button" class="wreg-btn-icon" id="wreg-modal-close" title="Close">&times;</button>
     </div>
-    <div id="wreg-item-list" class="wreg-item-list"></div>
+
+    <div class="wreg-body" id="wreg-body" data-view="list">
+
+      <div class="wreg-list-view" id="wreg-list-view">
+        <div class="wreg-list-header">
+          <div class="wreg-tab-bar" id="wreg-tab-bar">
+            <button type="button" class="wreg-tab" data-type="character">Characters</button>
+            <button type="button" class="wreg-tab" data-type="location">Locations</button>
+            <button type="button" class="wreg-tab" data-type="collection">Collections</button>
+            <button type="button" class="wreg-tab" data-type="lore">Lore</button>
+            <button type="button" class="wreg-tab" data-type="local">My Local Collections</button>
+          </div>
+          <div class="wreg-list-controls">
+            <input type="search" id="wreg-search" class="wreg-search" placeholder="Search... (species:neko owner:name)">
+            <label class="wreg-toggle-label wreg-filter-toggle" title="Show only currently-active items">
+              <input type="checkbox" id="wreg-active-only">
+              <span class="wreg-toggle-track"><span class="wreg-toggle-thumb"></span></span>
+              <span class="wreg-toggle-text">Active only</span>
+            </label>
+            <button type="button" class="wreg-btn-primary" id="wreg-new-collection-btn" style="display:none;">+ New Collection</button>
+          </div>
+        </div>
+        <div class="wreg-item-list" id="wreg-item-list"></div>
+      </div>
+
+      <div class="wreg-detail-view" id="wreg-detail-view"></div>
+
+      <div class="wreg-form-view" id="wreg-form-view"></div>
+
+    </div>
   </div>
 </div>

@@ -1,62 +1,474 @@
-.wreg-modal-overlay {
-    display: none;
-    position: absolute;
-    inset: 0;
+/* Weyland-Registrar -- visual design matched to Weyland-Router (confirmed
+ * live), scoped under .wreg-portal so nothing here leaks into the rest of
+ * SillyTavern or collides with a sibling extension's own tokens. */
+
+.wreg-portal {
+    --wreg-accent: #b4263a;
+    --wreg-accent-soft: rgba(180, 38, 58, 0.35);
+    --wreg-text: #e8e8e8;
+    --wreg-text-muted: #888;
+    --wreg-text-accent: #ffaab5;
+    --wreg-text-accent-bright: #ff6b80;
+    --wreg-font: 'JetBrains Mono', monospace;
+
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100dvw;
+    height: 100dvh;
+    pointer-events: none;
     z-index: 9999;
-    background: rgba(0, 0, 0, 0.6);
-    align-items: center;
-    justify-content: center;
+    font-family: var(--wreg-font);
 }
 
 .wreg-modal-window {
-    width: min(900px, 90vw);
-    height: min(700px, 85vh);
-    background: var(--SmartThemeBlurTintColor, #1e1e1e);
-    border-radius: 8px;
+    position: absolute;
+    left: 100px;
+    top: 60px;
+    width: min(820px, calc(100dvw - 24px));
+    height: 620px;
+    min-width: 480px;
+    min-height: 400px;
+    max-width: calc(100dvw - 24px);
+    max-height: calc(100dvh - 24px);
+    resize: both;
+    overflow: hidden;
+    pointer-events: all;
+    display: flex;
+    flex-direction: column;
+    background:
+        radial-gradient(ellipse 80% 60% at 50% 0%, rgba(180, 38, 58, 0.08) 0%, transparent 70%),
+        linear-gradient(180deg, rgba(20, 14, 18, 0.97) 0%, rgba(12, 8, 11, 0.97) 100%);
+    border: 1px solid var(--wreg-accent-soft);
+    border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 1px rgba(180, 38, 58, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(20px);
+    animation: wreg-open 0.2s ease;
+    color: var(--wreg-text);
+}
+
+@keyframes wreg-open {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.wreg-titlebar {
+    height: 40px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    background: linear-gradient(180deg, rgba(28, 16, 22, 0.98) 0%, rgba(18, 10, 16, 0.98) 100%);
+    border-bottom: 1px solid rgba(180, 38, 58, 0.25);
+    cursor: grab;
+    user-select: none;
+}
+
+.wreg-wordmark {
+    color: #e0445c;
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 2px;
+}
+
+.wreg-titlebar-spacer {
+    flex: 1;
+}
+
+.wreg-btn-icon {
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(180, 38, 58, 0.04);
+    border: 1px solid rgba(180, 38, 58, 0.18);
+    border-radius: 5px;
+    color: var(--wreg-text);
+    font-family: var(--wreg-font);
+    font-size: 13px;
+    padding: 0;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.wreg-btn-icon:hover {
+    background: rgba(180, 38, 58, 0.18);
+    border-color: rgba(180, 38, 58, 0.6);
+    color: #fff;
+    transform: scale(1.05);
+}
+
+.wreg-btn-icon:active {
+    transform: scale(0.95);
+}
+
+.wreg-btn-icon:focus-visible,
+.wreg-btn-primary:focus-visible,
+.wreg-tab:focus-visible,
+.wreg-search:focus-visible,
+.wreg-item-row:focus-visible,
+.wreg-form-field input[type="text"]:focus-visible,
+.wreg-toggle-label input[type="checkbox"]:focus-visible + .wreg-toggle-track {
+    outline: 2px solid var(--wreg-text-accent-bright);
+    outline-offset: 2px;
+}
+
+.wreg-btn-primary {
+    padding: 6px 14px;
+    background: linear-gradient(180deg, rgba(180, 38, 58, 0.3) 0%, rgba(180, 38, 58, 0.18) 100%);
+    border: 1px solid rgba(180, 38, 58, 0.5);
+    border-radius: 6px;
+    color: var(--wreg-text-accent);
+    font-family: var(--wreg-font);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wreg-btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(180, 38, 58, 0.3);
+}
+
+.wreg-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+/* Desktop: list + detail split side by side once a detail/form view is active. */
+.wreg-list-view {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
 
-.wreg-modal-header {
+.wreg-body[data-view="detail"] .wreg-list-view,
+.wreg-body[data-view="form"] .wreg-list-view {
+    flex: 0 0 50%;
+    border-right: 1px solid rgba(180, 38, 58, 0.2);
+}
+
+.wreg-detail-view,
+.wreg-form-view {
+    display: none;
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 14px;
+}
+
+.wreg-body[data-view="detail"] .wreg-detail-view,
+.wreg-body[data-view="form"] .wreg-form-view {
+    display: block;
+}
+
+.wreg-list-header {
+    flex-shrink: 0;
+    padding: 10px 12px;
     display: flex;
-    align-items: center;
-    gap: 0.5em;
-    padding: 0.5em;
-    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    flex-direction: column;
+    gap: 8px;
+    border-bottom: 1px solid rgba(180, 38, 58, 0.15);
 }
 
 .wreg-tab-bar {
     display: flex;
-    gap: 0.25em;
+    gap: 4px;
+    flex-wrap: wrap;
 }
 
 .wreg-tab {
-    padding: 0.3em 0.6em;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    color: var(--wreg-text-muted);
+    font-family: var(--wreg-font);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
     cursor: pointer;
-    border-radius: 4px;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.wreg-tab:hover {
+    color: var(--wreg-text);
+}
+
+.wreg-tab.wreg-tab-active {
+    background: rgba(180, 38, 58, 0.18);
+    border-color: rgba(180, 38, 58, 0.5);
+    color: var(--wreg-text-accent);
+}
+
+.wreg-list-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.wreg-search {
+    flex: 1;
+    padding: 5px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    color: var(--wreg-text);
+    font-family: var(--wreg-font);
+    font-size: 11px;
+}
+
+.wreg-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 10px;
+    color: var(--wreg-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.wreg-toggle-label input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+}
+
+.wreg-toggle-track {
+    width: 36px;
+    height: 20px;
+    border-radius: 11px;
+    background: linear-gradient(180deg, #777, #555);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    position: relative;
+    flex-shrink: 0;
+    transition: background 0.25s ease;
+}
+
+.wreg-toggle-thumb {
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #ccc;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background 0.25s ease;
+}
+
+.wreg-toggle-label input[type="checkbox"]:checked + .wreg-toggle-track {
+    background: linear-gradient(180deg, rgba(180, 38, 58, 0.45), rgba(180, 38, 58, 0.25));
+}
+
+.wreg-toggle-label input[type="checkbox"]:checked + .wreg-toggle-track .wreg-toggle-thumb {
+    transform: translateX(16px);
+    background: linear-gradient(180deg, #ff6b80, #b4263a);
+}
+
+.wreg-toggle-text {
+    white-space: nowrap;
 }
 
 .wreg-item-list {
     flex: 1;
     overflow-y: auto;
-    padding: 0.5em;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 0.5em;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
-.wreg-item-card {
-    border: 1px solid var(--SmartThemeBorderColor, #444);
-    border-radius: 6px;
-    padding: 0.5em;
+.wreg-item-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: linear-gradient(90deg, rgba(180, 38, 58, 0.06), rgba(180, 38, 58, 0.02));
+    border: 1px solid rgba(180, 38, 58, 0.15);
+    border-left: 2px solid rgba(180, 38, 58, 0.35);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: border-left-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
 }
 
-.wreg-item-card.wreg-active {
-    border-color: var(--SmartThemeQuoteColor, #4caf50);
+.wreg-item-row:hover {
+    border-left-color: rgba(180, 38, 58, 0.7);
+    transform: translateX(1px);
+    background: linear-gradient(90deg, rgba(180, 38, 58, 0.1), rgba(180, 38, 58, 0.03));
+}
+
+.wreg-item-row-active {
+    border-left-color: var(--wreg-text-accent-bright);
+}
+
+.wreg-item-row-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.wreg-item-title {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.wreg-item-summary {
+    font-size: 11px;
+    color: var(--wreg-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .wreg-forced-badge {
-    font-size: 0.8em;
-    opacity: 0.8;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--wreg-text-accent);
+    padding: 2px 6px;
+    border: 1px solid rgba(180, 38, 58, 0.4);
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.wreg-row-toggle {
+    flex-shrink: 0;
+}
+
+.wreg-detail-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+.wreg-detail-portrait {
+    max-width: 100%;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    display: block;
+}
+
+.wreg-detail-field {
+    margin-bottom: 10px;
+}
+
+.wreg-detail-field-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--wreg-text-muted);
+    margin-bottom: 3px;
+}
+
+.wreg-detail-field-value {
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.wreg-detail-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.wreg-form-field {
+    margin-bottom: 12px;
+}
+
+.wreg-form-field label {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--wreg-text-muted);
+    margin-bottom: 4px;
+}
+
+.wreg-form-field input[type="text"] {
+    width: 100%;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    color: var(--wreg-text);
+    font-family: var(--wreg-font);
+    font-size: 12px;
+}
+
+/* Mobile: full-screen, no drag/resize, list and detail/form are mutually
+ * exclusive full-screen views rather than side-by-side panes. */
+@media (max-width: 700px), (pointer: coarse) {
+    .wreg-modal-window {
+        position: fixed;
+        inset: 0;
+        left: 0;
+        top: 0;
+        width: 100dvw;
+        height: 100dvh;
+        min-width: 0;
+        min-height: 0;
+        max-width: none;
+        max-height: none;
+        border-radius: 0;
+        resize: none;
+    }
+
+    .wreg-titlebar {
+        cursor: default;
+    }
+
+    .wreg-body[data-view="list"] .wreg-list-view {
+        flex: 1;
+    }
+
+    .wreg-body[data-view="list"] .wreg-detail-view,
+    .wreg-body[data-view="list"] .wreg-form-view {
+        display: none;
+    }
+
+    .wreg-body[data-view="detail"] .wreg-list-view,
+    .wreg-body[data-view="form"] .wreg-list-view {
+        display: none;
+    }
+
+    .wreg-body[data-view="detail"] .wreg-detail-view,
+    .wreg-body[data-view="form"] .wreg-form-view {
+        flex: 1;
+        border-right: none;
+    }
+
+    .wreg-tab-bar {
+        overflow-x: auto;
+    }
+}
+
+/* Reduced motion: the open animation and every hover/toggle transition get a
+ * real fallback (instant state change) rather than merely a shorter
+ * duration. These rules must appear after every base rule above that
+ * declares the same properties on the same selectors, since specificity is
+ * otherwise tied and source order would decide the winner. */
+@media (prefers-reduced-motion: reduce) {
+    .wreg-modal-window {
+        animation: none;
+    }
+
+    .wreg-btn-icon,
+    .wreg-btn-primary,
+    .wreg-tab,
+    .wreg-item-row,
+    .wreg-toggle-track,
+    .wreg-toggle-thumb {
+        transition: none;
+    }
 }
