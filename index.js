@@ -150,9 +150,12 @@ async function initModal(settings) {
      * itself (Task 8 fix #1) -- lib/ui/modal.js's renderCurrentTab/openDetail
      * wrappers already re-render immediately after calling onActivate/
      * onDeactivate (fire-and-forget, no await -- see modal.js's own JSDoc on
-     * openModal). For the collection/item branches below, the relevant
-     * settings mutation happens synchronously before this function's first
-     * `await`, so that immediate re-render already sees the new state.
+     * openModal). For all three branches below (lore/collection/item), the
+     * relevant settings mutation happens synchronously before this
+     * function's first `await` (for lore, an optimistic write to
+     * settings.scenarioBooks[loreId] that activateScenario/deactivateScenario
+     * subsequently confirm/overwrite with the authoritative result), so that
+     * immediate re-render already sees the new state.
      * @param {string|number} itemKey
      * @param {boolean} makeActive
      */
@@ -163,6 +166,19 @@ async function initModal(settings) {
             const loreId = String(itemKey).slice('lore:'.length);
             const loreRecord = catalog.lore.find(l => String(l.loreId) === loreId);
             if (loreRecord) {
+                // Optimistic synchronous write BEFORE any await: modal.js calls
+                // onActivate/onDeactivate fire-and-forget and re-renders immediately
+                // afterward (see modal.js's JSDoc on openModal), so state must already
+                // be correct the instant this function returns. activateScenario/
+                // deactivateScenario (lib/scenarioBooks.js) only write the real,
+                // authoritative record (including `book`) after their own internal
+                // awaits -- too late for that synchronous re-render. Spread the
+                // existing record (if any) rather than replacing it wholesale so a
+                // reactivation's `book` field survives for activateScenario's own
+                // existingRecord.book === bookName reuse check; the subsequent await
+                // below overwrites/confirms this placeholder with the real result.
+                settings.scenarioBooks[loreId] = { ...(settings.scenarioBooks[loreId] ?? {}), active: makeActive };
+
                 const stContext = getStContext();
                 if (makeActive) {
                     const sandbox = await ensureSandbox(settings);
