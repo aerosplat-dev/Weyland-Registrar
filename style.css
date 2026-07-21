@@ -508,6 +508,24 @@
     font-size: 12px;
 }
 
+/* The member-search/category/select-active row for the collection form's
+ * checklist. Unlike .wreg-list-controls (which spans the whole modal width
+ * while browsing), .wreg-form-view only ever gets 50% of the modal's width
+ * once open (see .wreg-body[data-view="form"] .wreg-list-view above) -- a
+ * genuinely narrow column even on desktop, not just mobile -- so wrapping
+ * here is unconditional, not gated behind the mobile media query below. */
+.wreg-form-member-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.wreg-form-member-controls .wreg-search {
+    flex: 1 1 140px;
+}
+
 /* Mobile: full-screen, no drag/resize, list and detail/form are mutually
  * exclusive full-screen views rather than side-by-side panes. */
 @media (max-width: 700px), (pointer: coarse) {

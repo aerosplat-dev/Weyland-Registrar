@@ -271,7 +271,15 @@ async function initModal(settings) {
     }
 
     function getAvailableItemsForForm() {
-        return [...catalog.characters, ...catalog.locations].map(r => ({ itemKey: r.itemKey, name: r.name }));
+        // kind lets the member-checklist UI offer a Character/Location category
+        // filter; searchBlob (already computed per record in refreshCatalog) is
+        // passed through so that checklist can reuse the exact same
+        // field-syntax search (species:x owner:y) as the main browser, not a
+        // separately-maintained lesser search.
+        return [
+            ...catalog.characters.map(r => ({ itemKey: r.itemKey, name: r.name, kind: 'character', searchBlob: r.searchBlob })),
+            ...catalog.locations.map(r => ({ itemKey: r.itemKey, name: r.name, kind: 'location', searchBlob: r.searchBlob })),
+        ];
     }
 
     function onCreateLocalCollection(name, memberKeys) {
