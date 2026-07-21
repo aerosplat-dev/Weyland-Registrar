@@ -389,8 +389,16 @@ async function initModal(settings) {
         getItemsForType: (type) => {
             if (type === 'character') return catalog.characters;
             if (type === 'location') return catalog.locations;
-            if (type === 'collection') return catalog.collections.map(c => ({ itemKey: c.collectionId, name: c.name, summary: c.summary }));
-            if (type === 'lore') return catalog.lore.map(l => ({ itemKey: `lore:${l.loreId}`, name: l.name, summary: l.summary }));
+            // Spread the raw record (not just itemKey/name/summary) so
+            // createdAt/updatedAt/ownerName survive into the sortable item --
+            // every fetched record kind carries these uniformly (see
+            // lib/ui/sortItems.js's own doc comment), but a bare
+            // {itemKey, name, summary} projection was silently dropping them,
+            // making Sort by Created/Updated/Author a no-op on these two tabs
+            // (findings review, Task 9 follow-up). itemKey is assigned last so
+            // it always wins over any same-named field on the raw record.
+            if (type === 'collection') return catalog.collections.map(c => ({ ...c, itemKey: c.collectionId }));
+            if (type === 'lore') return catalog.lore.map(l => ({ ...l, itemKey: `lore:${l.loreId}` }));
             if (type === 'local') return Object.entries(settings.localCollections).map(([id, c]) => ({ itemKey: id, name: c.name }));
             return [];
         },
