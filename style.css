@@ -109,6 +109,7 @@
 .wreg-btn-primary:focus-visible,
 .wreg-tab:focus-visible,
 .wreg-search:focus-visible,
+.wreg-sort-select:focus-visible,
 .wreg-item-row:focus-visible,
 .wreg-form-field input[type="text"]:focus-visible,
 .wreg-toggle-label input[type="checkbox"]:focus-visible + .wreg-toggle-track {
@@ -352,6 +353,68 @@
 
 .wreg-row-toggle {
     flex-shrink: 0;
+}
+
+.wreg-row-select {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--wreg-text-accent-bright);
+}
+
+.wreg-sort-select {
+    padding: 5px 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    color: var(--wreg-text);
+    font-family: var(--wreg-font);
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.wreg-sort-select option:disabled {
+    color: var(--wreg-text-muted);
+}
+
+.wreg-btn-text {
+    width: auto;
+    padding: 0 10px;
+}
+
+.wreg-bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 8px;
+    margin-top: 4px;
+    border-top: 1px solid rgba(180, 38, 58, 0.15);
+}
+
+.wreg-bulk-count {
+    font-size: 11px;
+    color: var(--wreg-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+}
+
+.wreg-detail-members-list {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.wreg-detail-member-item {
+    font-size: 11px;
+    color: var(--wreg-text);
+    padding: 3px 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
 }
 
 .wreg-detail-title {
