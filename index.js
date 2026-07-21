@@ -14,18 +14,38 @@ import { createLocalCollection, renameLocalCollection, updateLocalCollectionMemb
 
 const EXTENSION_BASE_PATH = resolveExtensionBasePath(import.meta.url);
 
-let sandboxHandle = null;
+let sandboxPromise = null;
 let catalogCache = null;
 
 function getStContext() {
     return SillyTavern.getContext();
 }
 
-async function ensureSandbox(settings) {
-    if (!sandboxHandle) {
-        sandboxHandle = await createEntrySandbox(settings.apiBaseUrl);
+/**
+ * Memoizes the IN-FLIGHT creation promise, not just the resolved handle.
+ * `handleBulkToggle`'s lore branch calls this from inside a
+ * `loreKeys.map(async ...)` (see below) -- `Array.prototype.map`'s callback
+ * runs synchronously up to its first `await`, so when 2+ lore items are
+ * bulk-activated while no sandbox exists yet, every callback would reach
+ * this function before any of them could resolve and assign a handle. A
+ * check-then-await-then-assign guard on a plain `sandboxHandle` variable (the
+ * original shape here) lets all of them pass the `if` check and each call
+ * `createEntrySandbox` -- N-1 orphaned `<iframe>`s + permanent `message`
+ * listeners leaked (entrySandbox.js). Caching the promise itself closes that
+ * window: the second caller awaits the same in-flight promise instead of
+ * starting a second one. On failure the cached promise is cleared so the
+ * next call retries instead of permanently caching a rejection.
+ * @param {object} settings
+ * @returns {Promise<{callFunction: (name: string, args: any[]) => Promise<any>, destroy: () => void}>}
+ */
+function ensureSandbox(settings) {
+    if (!sandboxPromise) {
+        sandboxPromise = createEntrySandbox(settings.apiBaseUrl).catch((error) => {
+            sandboxPromise = null;
+            throw error;
+        });
     }
-    return sandboxHandle;
+    return sandboxPromise;
 }
 
 function buildResolvedCollections(settings, catalog) {
