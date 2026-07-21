@@ -239,7 +239,19 @@ async function initModal(settings) {
             const record = isLocal
                 ? { name: settings.localCollections[key].name }
                 : (catalog.collections.find(c => String(c.collectionId) === key) ?? { name: key });
-            const memberKeys = resolvedCollections[key]?.memberKeys ?? [];
+            // For a LOCAL collection, settings.collections[key] always exists (created
+            // immediately by onCreateLocalCollection), so resolvedCollections[key] is reliable.
+            // For a REGISTRAR-native collection, settings.collections[key] only exists once the
+            // user has toggled it at least once -- buildResolvedCollections silently omits any
+            // collection that's never been toggled, which would make a collection's Members field
+            // show empty the very first time a user opens its detail (confirmed live against the
+            // real "Josh's Squirrel Hole" collection on registrar.weybooru.com before this fix).
+            // Bypass that gate here and resolve members directly from the record instead --
+            // "what members would this collection have" is independent of whether it's currently
+            // active.
+            const memberKeys = isLocal
+                ? (resolvedCollections[key]?.memberKeys ?? [])
+                : resolveCollectionMembers(record, catalog);
             const allItems = [...catalog.characters, ...catalog.locations];
             const memberNames = memberKeys
                 .map(k => allItems.find(i => i.itemKey === k)?.name)
