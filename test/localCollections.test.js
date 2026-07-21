@@ -22,6 +22,20 @@ test('two collections created in a row get different ids', () => {
     assert.notEqual(id1, id2);
 });
 
+test('creates a valid id when crypto.randomUUID is unavailable (insecure-context browser fallback)', () => {
+    const originalRandomUUID = globalThis.crypto.randomUUID;
+    // @ts-expect-error simulating a browser secure-context restriction, where randomUUID is
+    // undefined but getRandomValues remains available
+    globalThis.crypto.randomUUID = undefined;
+    try {
+        const settings = getSettings({});
+        const id = createLocalCollection(settings, 'Fallback Cast');
+        assert.match(id, /^local:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    } finally {
+        globalThis.crypto.randomUUID = originalRandomUUID;
+    }
+});
+
 test('updateLocalCollectionMembers replaces the member list', () => {
     const settings = getSettings({});
     const id = createLocalCollection(settings, 'Cast', ['char:1']);
