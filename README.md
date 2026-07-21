@@ -23,3 +23,7 @@ A floating, draggable/resizable browser (full-screen on mobile) with a scrollabl
 - Click an item to see its full detail — summary, curated fields, author, and (for characters) on-demand "Show Background/History" / "Show Secrets" reveals
 - Create your own Local Sets from any mix of characters/locations, and manage their membership
 - Everything you activate is written straight into the correct managed World Info lorebooks — no manual import step
+
+## How to Install
+
+Copy-paste `https://github.com/aerosplat-dev/Weyland-Registrar.git` into the built-in SillyTavern extension installer, or just `git clone https://github.com/aerosplat-dev/Weyland-Registrar.git` under `SillyTavern/data/default-user/extensions`.
