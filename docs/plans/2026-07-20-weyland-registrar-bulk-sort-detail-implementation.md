@@ -1267,9 +1267,16 @@ the only real functional test for every DOM-wiring task above (3, 4 partially, 5
     confirm via ground-truth `extensionSettings` read (not just DOM) that `itemStates` was updated
     for every selected key and `syncBooks` ran (both managed World Info books reflect every newly
     active character/location).
-- [ ] Bulk Deactivate on a mixed selection (characters + a collection + a lore item) correctly
-    deactivates every kind through its own mechanism (itemStates for items, settings.collections for
-    the collection, settings.scenarioBooks/deactivateScenario for the lore item).
+- [ ] Bulk Deactivate on the Collections tab (2+ selected registrar/local collections) correctly
+    deactivates every one via `settings.collections`, and a single `syncBooks` call reflects all of
+    them. NOTE: selection is per-tab and each tab is single-kind (selectedKeys clears on every tab
+    switch), so a genuinely mixed-kind selection (characters + a collection + a lore item in the
+    same bulk action) can never actually be constructed through the UI — do not attempt to test it.
+- [ ] Bulk Activate/Deactivate on the Lore tab with 2+ lore items selected correctly activates each
+    through its own dedicated-book mechanism (`activateScenario`/`deactivateScenario`), confirms no
+    console error from the `ensureSandbox` race fixed in this plan's final review (only one sandbox
+    iframe should exist afterward, not one per lore item — check via
+    `document.querySelectorAll('iframe').length` before/after).
 - [ ] Bulk Clear empties the selection and hides the bulk bar without changing any activation state.
 - [ ] Switching tabs clears the selection (bulk bar disappears); search text and the active-only
     filter do NOT clear an existing selection within the same tab.

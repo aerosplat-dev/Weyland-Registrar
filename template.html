@@ -12,36 +12,36 @@
 
       <div class="wreg-list-view" id="wreg-list-view">
         <div class="wreg-list-header">
-        <div class="wreg-tab-bar" id="wreg-tab-bar">
-          <button type="button" class="wreg-tab" data-type="character">Characters</button>
-          <button type="button" class="wreg-tab" data-type="location">Locations</button>
-          <button type="button" class="wreg-tab" data-type="collection">Collections</button>
-          <button type="button" class="wreg-tab" data-type="lore">Lore</button>
-          <button type="button" class="wreg-tab" data-type="local">My Local Collections</button>
+          <div class="wreg-tab-bar" id="wreg-tab-bar">
+            <button type="button" class="wreg-tab" data-type="character">Characters</button>
+            <button type="button" class="wreg-tab" data-type="location">Locations</button>
+            <button type="button" class="wreg-tab" data-type="collection">Collections</button>
+            <button type="button" class="wreg-tab" data-type="lore">Lore</button>
+            <button type="button" class="wreg-tab" data-type="local">My Local Collections</button>
+          </div>
+          <div class="wreg-list-controls">
+            <input type="search" id="wreg-search" class="wreg-search" placeholder="Search... (species:neko owner:name)">
+            <select id="wreg-sort" class="wreg-sort-select" title="Sort by">
+              <option value="name">Name</option>
+              <option value="created">Created</option>
+              <option value="updated">Last Updated</option>
+              <option value="author">Author</option>
+            </select>
+            <button type="button" class="wreg-btn-icon" id="wreg-sort-direction" title="Toggle sort direction">&#9650;</button>
+            <label class="wreg-toggle-label wreg-filter-toggle" title="Show only currently-active items">
+              <input type="checkbox" id="wreg-active-only">
+              <span class="wreg-toggle-track"><span class="wreg-toggle-thumb"></span></span>
+              <span class="wreg-toggle-text">Active only</span>
+            </label>
+            <button type="button" class="wreg-btn-primary" id="wreg-new-collection-btn" style="display:none;">+ New Collection</button>
+          </div>
+          <div class="wreg-bulk-bar" id="wreg-bulk-bar" style="display:none;">
+            <span class="wreg-bulk-count" id="wreg-bulk-count">0 selected</span>
+            <button type="button" class="wreg-btn-primary" id="wreg-bulk-activate">Activate</button>
+            <button type="button" class="wreg-btn-icon wreg-btn-text" id="wreg-bulk-deactivate">Deactivate</button>
+            <button type="button" class="wreg-btn-icon wreg-btn-text" id="wreg-bulk-clear">Clear</button>
+          </div>
         </div>
-        <div class="wreg-list-controls">
-          <input type="search" id="wreg-search" class="wreg-search" placeholder="Search... (species:neko owner:name)">
-          <select id="wreg-sort" class="wreg-sort-select" title="Sort by">
-            <option value="name">Name</option>
-            <option value="created">Created</option>
-            <option value="updated">Last Updated</option>
-            <option value="author">Author</option>
-          </select>
-          <button type="button" class="wreg-btn-icon" id="wreg-sort-direction" title="Toggle sort direction">&#9650;</button>
-          <label class="wreg-toggle-label wreg-filter-toggle" title="Show only currently-active items">
-            <input type="checkbox" id="wreg-active-only">
-            <span class="wreg-toggle-track"><span class="wreg-toggle-thumb"></span></span>
-            <span class="wreg-toggle-text">Active only</span>
-          </label>
-          <button type="button" class="wreg-btn-primary" id="wreg-new-collection-btn" style="display:none;">+ New Collection</button>
-        </div>
-        <div class="wreg-bulk-bar" id="wreg-bulk-bar" style="display:none;">
-          <span class="wreg-bulk-count" id="wreg-bulk-count">0 selected</span>
-          <button type="button" class="wreg-btn-primary" id="wreg-bulk-activate">Activate</button>
-          <button type="button" class="wreg-btn-icon wreg-btn-text" id="wreg-bulk-deactivate">Deactivate</button>
-          <button type="button" class="wreg-btn-icon wreg-btn-text" id="wreg-bulk-clear">Clear</button>
-        </div>
-      </div>
         <div class="wreg-item-list" id="wreg-item-list"></div>
       </div>
 

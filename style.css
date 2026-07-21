@@ -378,6 +378,11 @@
     color: var(--wreg-text-muted);
 }
 
+/* Single-class selector, same (0,1,0) specificity as .wreg-btn-icon --
+ * this override wins only because it's declared later in source order.
+ * Must stay after .wreg-btn-icon's own rule above; matches the same
+ * source-order-dependent-tie hazard this file already documents for its
+ * reduced-motion block near the bottom. */
 .wreg-btn-text {
     width: auto;
     padding: 0 10px;
