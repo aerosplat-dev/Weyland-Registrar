@@ -196,6 +196,49 @@
     display: block;
 }
 
+/* Loading state: shown instead of the list (never side-by-side with it,
+ * unlike detail/form) while a catalog fetch is in flight -- either the
+ * very first population attempt racing the toolbar button becoming
+ * clickable, or a manual "Refresh Catalog" click. Hiding .wreg-list-view
+ * here is unconditional (not just in the mobile media query below) since
+ * loading never needs the desktop 50/50 split detail/form use. */
+.wreg-body[data-view="loading"] .wreg-list-view {
+    display: none;
+}
+
+.wreg-loading-view {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    text-align: center;
+}
+
+.wreg-body[data-view="loading"] .wreg-loading-view {
+    display: flex;
+}
+
+.wreg-spinner {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 3px solid rgba(180, 38, 58, 0.2);
+    border-top-color: var(--wreg-accent);
+    animation: wreg-spin 0.8s linear infinite;
+}
+
+@keyframes wreg-spin {
+    to { transform: rotate(360deg); }
+}
+
+.wreg-loading-text {
+    font-size: 12px;
+    color: var(--wreg-text-muted);
+}
+
 .wreg-list-header {
     flex-shrink: 0;
     padding: 10px 12px;
@@ -590,5 +633,12 @@
     .wreg-toggle-track,
     .wreg-toggle-thumb {
         transition: none;
+    }
+
+    /* No continuous rotation -- the "Fetching..." text alone communicates
+     * the loading state, a static ring instead of a spinning one. */
+    .wreg-spinner {
+        animation: none;
+        border-top-color: rgba(180, 38, 58, 0.2);
     }
 }

@@ -2,7 +2,7 @@
 import { resolveExtensionBasePath } from './lib/location.js';
 import { getSettings } from './lib/settings.js';
 import { injectToolbarButton } from './lib/ui/toolbarButton.js';
-import { openModal } from './lib/ui/modal.js';
+import { openModal, showModalLoading } from './lib/ui/modal.js';
 import { createCatalogCache, createIndexedDbStorageEngine } from './lib/catalogCache.js';
 import { fetchCharacterList, fetchLocationList, fetchCollectionList, toItemKey, buildSearchBlob } from './lib/registrarApi.js';
 import { createEntrySandbox } from './lib/entrySandbox.js';
@@ -129,6 +129,25 @@ function classifyItemKey(itemKey) {
 }
 
 async function initModal(settings) {
+    // Never assume the catalog is already populated by the time the modal
+    // opens -- boot's own background population (see ensureCatalogFresh)
+    // races the toolbar button becoming clickable, and a fast/eager click
+    // can land here before that fetch finishes. Show a real loading state
+    // and wait for it (sharing the same in-flight attempt as boot's own
+    // call, not firing a duplicate) rather than rendering whatever happens
+    // to already be cached, which was empty in the confirmed-live repro.
+    if (!(await catalogCache.getCharacters()) || await isCatalogStale(settings)) {
+        await showModalLoading();
+        try {
+            await ensureCatalogFresh(settings);
+        } catch (error) {
+            // Still proceed to open the modal even if this failed -- readCatalog()
+            // below just returns whatever's cached (possibly still empty), and the
+            // user's own manual "Refresh Catalog" button remains available to retry.
+            console.error('[Weyland-Registrar] Failed to populate catalog before opening modal:', error);
+        }
+    }
+
     const catalog = await readCatalog();
     // NOTE: no outer `resolvedCollections` snapshot here (fix #2, Task 8) --
     // resolveActive/getItemDetail below each compute buildResolvedCollections
@@ -336,13 +355,23 @@ async function initModal(settings) {
         onActivate: (itemKey) => handleToggle(itemKey, true),
         onDeactivate: (itemKey) => handleToggle(itemKey, false),
         onRefreshCatalog: async () => {
+            // Show the loading state immediately -- a manual refresh can take
+            // several seconds on a real connection (confirmed live: ~9s under
+            // simulated latency, mostly the loci/coll CORS-fallback double-hop),
+            // and the list previously stayed showing stale/old data with zero
+            // indication a refresh was even happening.
+            await showModalLoading();
             try {
                 await refreshCatalog(settings);
                 await syncBooks(settings);
-                await initModal(settings);
             } catch (error) {
                 console.error('[Weyland-Registrar] Manual catalog refresh failed:', error);
             }
+            // Always return to a real view, whether the refresh succeeded or
+            // not -- otherwise a failure here would leave the user stuck
+            // staring at the loading spinner forever, which is worse than
+            // falling back to whatever (possibly stale) data is still cached.
+            await initModal(settings);
         },
         getItemDetail,
         getAvailableItemsForForm,
@@ -386,6 +415,42 @@ async function isCatalogStale(settings) {
     return Date.now() - lastRefreshed >= intervalMinutes * 60 * 1000;
 }
 
+let catalogReadyPromise = null;
+
+/**
+ * Ensures the catalog is populated (empty cache) or fresh (stale per
+ * settings.refreshIntervalMinutes) before returning, memoizing the
+ * IN-FLIGHT attempt so concurrent callers share one fetch instead of firing
+ * duplicates -- specifically closes the race between boot's own background
+ * population and a user clicking the toolbar button before that finishes.
+ * Confirmed live (2s artificial latency per Registrar request, simulating a
+ * real remote user): without this, the modal opened showing zero items in
+ * every tab and never recovered even after boot's background fetch
+ * eventually succeeded, since nothing re-rendered the already-open modal
+ * from an unrelated resolving promise.
+ *
+ * Unlike `ensureSandbox`'s memoization (kept only for the extension's whole
+ * lifetime, cleared solely on failure), this clears itself once settled
+ * EITHER way via `finally` -- it exists only to dedupe concurrent in-flight
+ * callers during one population attempt, not to permanently skip staleness
+ * checks for the rest of the session; a call made after the previous one
+ * has already settled always re-checks staleness fresh.
+ * @param {object} settings
+ * @returns {Promise<void>}
+ */
+function ensureCatalogFresh(settings) {
+    if (!catalogReadyPromise) {
+        catalogReadyPromise = (async () => {
+            if (!(await catalogCache.getCharacters()) || await isCatalogStale(settings)) {
+                await refreshCatalog(settings);
+            }
+        })().finally(() => {
+            catalogReadyPromise = null;
+        });
+    }
+    return catalogReadyPromise;
+}
+
 jQuery(async () => {
     const context = getStContext();
     const settings = getSettings(context.extensionSettings);
@@ -408,9 +473,7 @@ jQuery(async () => {
     });
 
     try {
-        if (!(await catalogCache.getCharacters()) || await isCatalogStale(settings)) {
-            await refreshCatalog(settings);
-        }
+        await ensureCatalogFresh(settings);
     } catch (error) {
         // A Registrar-unreachable first boot shouldn't leave an unhandled
         // rejection behind (jQuery() calls this callback fire-and-forget,
