@@ -1,6 +1,30 @@
 /* Weyland-Registrar -- visual design matched to Weyland-Router (confirmed
  * live), scoped under .wreg-portal so nothing here leaks into the rest of
- * SillyTavern or collides with a sibling extension's own tokens. */
+ * SillyTavern or collides with a sibling extension's own tokens. The one
+ * exception is .wreg-toolbar-icon/.wreg-toolbar-label below: the toolbar
+ * button itself is injected directly into SillyTavern's own World Info
+ * panel DOM (outside .wreg-portal, which doesn't exist until the modal is
+ * first opened), so these two rules intentionally live at top level. */
+
+/* Sized to match #world_refresh and its sibling menu_button icons'
+ * FontAwesome glyphs at this panel's font-size:15px (measured live). */
+.wreg-toolbar-icon {
+    width: 15px;
+    height: 15px;
+    object-fit: contain;
+    vertical-align: middle;
+}
+
+/* Text label shown next to the icon on desktop; hidden on mobile/coarse
+ * pointer so the button stays icon-only and compact, matching the same
+ * mobile criteria the modal itself uses (@media block near the bottom of
+ * this file) for a consistent "what counts as mobile" definition across
+ * the whole extension. */
+@media (max-width: 700px), (pointer: coarse) {
+    .wreg-toolbar-label {
+        display: none;
+    }
+}
 
 .wreg-portal {
     --wreg-accent: #b4263a;
