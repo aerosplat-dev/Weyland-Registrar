@@ -39,11 +39,36 @@ test('syncCharacterBook writes entries for every active character plus one roste
 
     const book = stContext.books[CHARACTER_BOOK_NAME];
     assert.ok(book);
-    const uids = characterEntryUids('1');
+    // Slot index 0 (the first/only active character), not raw characterId
+    // '1' -- see uidScheme.js's own doc for why these are no longer the same.
+    const uids = characterEntryUids(0);
     assert.ok(book.entries[uids.info]);
     assert.ok(book.entries[uids.end]);
     assert.ok(book.entries[ROSTER_UID]);
     assert.match(book.entries[ROSTER_UID].content, /Maeve:/);
+});
+
+test('syncCharacterBook assigns compact sequential slot indexes regardless of sparse/large raw characterIds', async () => {
+    const stContext = fakeStContext();
+    // Real Registrar characterIds are neither small nor contiguous (this
+    // catalog's real data runs well into the 700s) -- two active characters
+    // with sparse/large ids must still land in the compact 5001-5010 block,
+    // not scattered based on their raw ids (which, for id 700, would overflow
+    // past MAX_CHARACTER_UID under the old characterId*5-based scheme).
+    const settings = { itemStates: { 'char:5': 'active', 'char:700': 'active' }, collections: {} };
+    const recordsByKey = {
+        'char:5': { characterId: '5', name: 'Low', species: '', gender: '', onlineHandle: '', schoolYear: '', dwelling: '' },
+        'char:700': { characterId: '700', name: 'High', species: '', gender: '', onlineHandle: '', schoolYear: '', dwelling: '' },
+    };
+
+    await syncCharacterBook(stContext, fakeCallFunction(), settings, recordsByKey);
+
+    const book = stContext.books[CHARACTER_BOOK_NAME];
+    const slot0 = characterEntryUids(0);
+    const slot1 = characterEntryUids(1);
+    assert.ok(book.entries[slot0.info], 'first active character gets slot 0 (uids 5001-5005)');
+    assert.ok(book.entries[slot1.info], 'second active character gets slot 1 (uids 5006-5010)');
+    assert.ok(Object.keys(book.entries).map(Number).every(uid => uid <= 7999), 'no entry exceeds MAX_CHARACTER_UID');
 });
 
 test('syncCharacterBook activates the book via /world after writing', async () => {
@@ -55,7 +80,7 @@ test('syncCharacterBook activates the book via /world after writing', async () =
 
 test('syncCharacterBook removes entries for a character that becomes inactive', async () => {
     const stContext = fakeStContext();
-    const uids = characterEntryUids('1');
+    const uids = characterEntryUids(0);
     stContext.books[CHARACTER_BOOK_NAME] = {
         entries: {
             [uids.info]: { uid: uids.info, comment: 'Maeve' },
