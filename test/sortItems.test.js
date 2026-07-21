@@ -66,3 +66,21 @@ test('an unrecognized field falls back to name', () => {
     const result = sortItems(RECORDS, 'bogus', 'asc');
     assert.deepEqual(result.map(r => r.name), ['Ayano', 'Maya', 'Winona']);
 });
+
+test('a leading/trailing space in name does not put it before every letter (real Registrar data bug)', () => {
+    const items = [{ name: ' Lucia' }, { name: 'Aaron' }, { name: 'Abby' }];
+    const result = sortItems(items, 'name', 'asc');
+    assert.deepEqual(result.map(i => i.name), ['Aaron', 'Abby', ' Lucia']);
+});
+
+test('a leading/trailing space in ownerName does not affect author sort order', () => {
+    const items = [{ name: 'X', ownerName: ' zed' }, { name: 'Y', ownerName: 'anna' }];
+    const result = sortItems(items, 'author', 'asc');
+    assert.deepEqual(result.map(i => i.name), ['Y', 'X']);
+});
+
+test('a whitespace-only name is treated as missing (sorts to the end), not as an empty-string leader', () => {
+    const items = [{ name: '   ' }, { name: 'Aaron' }];
+    const result = sortItems(items, 'name', 'asc');
+    assert.deepEqual(result.map(i => i.name), ['Aaron', '   ']);
+});

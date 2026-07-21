@@ -51,10 +51,34 @@ test('buildDetailFields for a location includes description and tags', () => {
     ]);
 });
 
-test('buildDetailFields returns an empty array for collection/lore/local kinds', () => {
+test('buildDetailFields returns an empty array for collection/local kinds with no author', () => {
     assert.deepEqual(buildDetailFields({ name: 'X', summary: 'Y' }, 'collection'), []);
-    assert.deepEqual(buildDetailFields({ name: 'X', summary: 'Y' }, 'lore'), []);
     assert.deepEqual(buildDetailFields({ name: 'X', summary: 'Y' }, 'local'), []);
+});
+
+test('buildDetailFields includes an Author field for a character when ownerName is present', () => {
+    const fields = buildDetailFields({ ownerName: 'josh033169', personality: 'Kind.' }, 'character');
+    assert.deepEqual(fields, [
+        { label: 'Author', value: 'josh033169' },
+        { label: 'Personality', value: 'Kind.' },
+    ]);
+});
+
+test('buildDetailFields includes an Author field for a location when ownerName is present', () => {
+    const fields = buildDetailFields({ ownerName: 'josh033169', description: 'A quiet library.' }, 'location');
+    assert.deepEqual(fields, [
+        { label: 'Author', value: 'josh033169' },
+        { label: 'Description', value: 'A quiet library.' },
+    ]);
+});
+
+test('buildDetailFields includes an Author field for a registrar collection when ownerName is present', () => {
+    const fields = buildDetailFields({ ownerName: 'josh033169', name: 'Josh\'s Squirrel Hole' }, 'collection');
+    assert.deepEqual(fields, [{ label: 'Author', value: 'josh033169' }]);
+});
+
+test('buildDetailFields omits the Author field for a local collection (no ownerName -- user-created)', () => {
+    assert.deepEqual(buildDetailFields({ name: 'My Cast' }, 'local'), []);
 });
 
 test('buildRevealableFields background section returns Background and Background Friends, in order', () => {
