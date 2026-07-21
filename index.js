@@ -4,10 +4,9 @@ import { getSettings } from './lib/settings.js';
 import { injectToolbarButton } from './lib/ui/toolbarButton.js';
 import { openModal } from './lib/ui/modal.js';
 import { createCatalogCache, createIndexedDbStorageEngine } from './lib/catalogCache.js';
-import { fetchCharacterList, fetchLocationList, fetchCollectionList, fetchLoreList, toItemKey, buildSearchBlob } from './lib/registrarApi.js';
+import { fetchCharacterList, fetchLocationList, fetchCollectionList, toItemKey, buildSearchBlob } from './lib/registrarApi.js';
 import { createEntrySandbox } from './lib/entrySandbox.js';
 import { syncCharacterBook, syncLocationBook } from './lib/worldInfoWriter.js';
-import { activateScenario, deactivateScenario } from './lib/scenarioBooks.js';
 import { resolveItemActive } from './lib/activationState.js';
 import { resolveCollectionMembers } from './lib/collectionResolver.js';
 import { createLocalCollection, renameLocalCollection, updateLocalCollectionMembers, deleteLocalCollection } from './lib/localCollections.js';
@@ -22,19 +21,13 @@ function getStContext() {
 }
 
 /**
- * Memoizes the IN-FLIGHT creation promise, not just the resolved handle.
- * `handleBulkToggle`'s lore branch calls this from inside a
- * `loreKeys.map(async ...)` (see below) -- `Array.prototype.map`'s callback
- * runs synchronously up to its first `await`, so when 2+ lore items are
- * bulk-activated while no sandbox exists yet, every callback would reach
- * this function before any of them could resolve and assign a handle. A
- * check-then-await-then-assign guard on a plain `sandboxHandle` variable (the
- * original shape here) lets all of them pass the `if` check and each call
- * `createEntrySandbox` -- N-1 orphaned `<iframe>`s + permanent `message`
- * listeners leaked (entrySandbox.js). Caching the promise itself closes that
- * window: the second caller awaits the same in-flight promise instead of
- * starting a second one. On failure the cached promise is cleared so the
- * next call retries instead of permanently caching a rejection.
+ * Memoizes the IN-FLIGHT creation promise, not just the resolved handle, so
+ * concurrent callers (e.g. a bulk action touching several sandbox-backed
+ * operations at once) await the same in-flight promise instead of each
+ * starting their own -- N-1 duplicate `createEntrySandbox` calls would each
+ * leak an orphaned `<iframe>` + permanent `message` listener
+ * (entrySandbox.js). On failure the cached promise is cleared so the next
+ * call retries instead of permanently caching a rejection.
  * @param {object} settings
  * @returns {Promise<{callFunction: (name: string, args: any[]) => Promise<any>, destroy: () => void}>}
  */
@@ -62,30 +55,42 @@ function buildResolvedCollections(settings, catalog) {
 }
 
 async function refreshCatalog(settings) {
-    const [characters, locations, collections, lore] = await Promise.all([
+    const [characters, locations, collections] = await Promise.all([
         fetchCharacterList(settings.apiBaseUrl),
         fetchLocationList(settings.apiBaseUrl),
         fetchCollectionList(settings.apiBaseUrl),
-        fetchLoreList(settings.apiBaseUrl),
     ]);
     const taggedCharacters = characters.map(r => ({ ...r, itemKey: toItemKey(r, 'character'), searchBlob: buildSearchBlob(r, 'character') }));
     const taggedLocations = locations.map(r => ({ ...r, itemKey: toItemKey(r, 'location'), searchBlob: buildSearchBlob(r, 'location') }));
 
-    await catalogCache.setCharacters(taggedCharacters);
-    await catalogCache.setLocations(taggedLocations);
-    await catalogCache.setCollections(collections);
-    await catalogCache.setLore(lore);
-    await catalogCache.setLastRefreshed(Date.now());
+    await Promise.all([
+        catalogCache.setCharacters(taggedCharacters),
+        catalogCache.setLocations(taggedLocations),
+        catalogCache.setCollections(collections),
+        catalogCache.setLastRefreshed(Date.now()),
+    ]);
 
-    return { characters: taggedCharacters, locations: taggedLocations, collections, lore };
+    return { characters: taggedCharacters, locations: taggedLocations, collections };
+}
+
+/**
+ * Reads the three catalog kinds in parallel (previously three sequential
+ * awaits -- each IndexedDB round-trip stacking on the last measurably added
+ * latency to every activate/deactivate, since this runs on every one of
+ * them).
+ * @returns {Promise<{characters: object[], locations: object[], collections: object[]}>}
+ */
+async function readCatalog() {
+    const [characters, locations, collections] = await Promise.all([
+        catalogCache.getCharacters(),
+        catalogCache.getLocations(),
+        catalogCache.getCollections(),
+    ]);
+    return { characters: characters ?? [], locations: locations ?? [], collections: collections ?? [] };
 }
 
 async function syncBooks(settings) {
-    const catalog = {
-        characters: (await catalogCache.getCharacters()) ?? [],
-        locations: (await catalogCache.getLocations()) ?? [],
-        collections: (await catalogCache.getCollections()) ?? [],
-    };
+    const catalog = await readCatalog();
     const resolvedCollections = buildResolvedCollections(settings, catalog);
     const settingsForSync = { ...settings, collections: resolvedCollections };
 
@@ -102,7 +107,7 @@ async function syncBooks(settings) {
 /**
  * Classifies a modal itemKey by which activation mechanism owns it.
  *
- * Task 16's itemList.js click handler only ever passes item.itemKey back to
+ * itemList.js's click handler only ever passes item.itemKey back to
  * onActivate/onDeactivate/resolveActive/resolveForced -- it never passes the
  * tab/type the item came from (openModal's state interface is intentionally
  * generic over itemKey). So this extension has to recover "what kind of
@@ -112,48 +117,19 @@ async function syncBooks(settings) {
  *    lib/activationState.js (spec S9): settings.itemStates[itemKey].
  *  - "local:" prefix (always, by construction -- see
  *    lib/localCollections.js's createLocalCollection) -> a local collection.
- *  - "lore:" prefix (this module's own getItemsForType('lore') below, which
- *    mints `lore:${l.loreId}`) -> a scenario/lore item. Per spec S8, lore/
- *    scenarios activate via their OWN dedicated whole-book mechanism
- *    (lib/scenarioBooks.js's activateScenario/deactivateScenario) -- never
- *    itemStates, never settings.collections. (The brief's original reference
- *    index.js routed every itemKey through the generic itemStates+syncBooks
- *    path, which would silently never create/activate a scenario's dedicated
- *    Lore Book at all -- a real gap, caught by cross-checking spec S8 and
- *    lib/scenarioBooks.js directly.)
  *  - otherwise -> a Registrar collection id: settings.collections[id].active
  *    (spec S9's collection-level active flag, distinct from itemStates).
- *
- * Registrar collectionId and loreId are both raw, unprefixed ids drawn from
- * two independent id spaces on the Registrar -- nothing stops a collection
- * and a lore item from sharing the same raw id value. getItemsForType('lore')
- * below prefixes its itemKey with "lore:" (matching the char:/loc:/local:
- * convention) specifically so this classification is an unambiguous prefix
- * check with zero collision risk against a same-valued collectionId; only
- * lib/scenarioBooks.js's OWN internal keying (settings.scenarioBooks,
- * catalog.lore lookups) still uses the raw loreId, so every call site here
- * that classifies a key as 'lore' must strip the "lore:" prefix before using
- * it to look up a lore record or index into settings.scenarioBooks. Lore is
- * checked before the collection fallback since it is the narrower, more
- * specific mechanism.
  * @param {string|number} itemKey
- * @returns {'item'|'lore'|'collection'}
+ * @returns {'item'|'collection'}
  */
 function classifyItemKey(itemKey) {
     const key = String(itemKey);
     if (key.startsWith('char:') || key.startsWith('loc:')) return 'item';
-    if (key.startsWith('local:')) return 'collection';
-    if (key.startsWith('lore:')) return 'lore';
     return 'collection';
 }
 
 async function initModal(settings) {
-    const catalog = {
-        characters: (await catalogCache.getCharacters()) ?? [],
-        locations: (await catalogCache.getLocations()) ?? [],
-        collections: (await catalogCache.getCollections()) ?? [],
-        lore: (await catalogCache.getLore()) ?? [],
-    };
+    const catalog = await readCatalog();
     // NOTE: no outer `resolvedCollections` snapshot here (fix #2, Task 8) --
     // resolveActive/getItemDetail below each compute buildResolvedCollections
     // fresh on every call instead, since modal.js calls them repeatedly
@@ -164,61 +140,30 @@ async function initModal(settings) {
     /**
      * Handles both onActivate and onDeactivate for every tab: branches by
      * classifyItemKey so a collection-type itemKey writes
-     * settings.collections[id].active (spec S9) instead of itemStates, and a
-     * lore-type itemKey goes through activateScenario/deactivateScenario
-     * (spec S8) instead of itemStates+syncBooks. Does NOT re-render the modal
-     * itself (Task 8 fix #1) -- lib/ui/modal.js's renderCurrentTab/openDetail
-     * wrappers already re-render immediately after calling onActivate/
-     * onDeactivate (fire-and-forget, no await -- see modal.js's own JSDoc on
-     * openModal). For all three branches below (lore/collection/item), the
-     * relevant settings mutation happens synchronously before this
-     * function's first `await` (for lore, an optimistic write to
-     * settings.scenarioBooks[loreId] that activateScenario/deactivateScenario
-     * subsequently confirm/overwrite with the authoritative result), so that
-     * immediate re-render already sees the new state.
+     * settings.collections[id].active (spec S9) instead of itemStates. Does
+     * NOT re-render the modal itself (Task 8 fix #1) -- lib/ui/modal.js's
+     * renderCurrentTab/openDetail wrappers already re-render immediately
+     * after calling onActivate/onDeactivate (fire-and-forget, no await -- see
+     * modal.js's own JSDoc on openModal). Both branches below mutate
+     * synchronously before this function's first `await`, so that immediate
+     * re-render already sees the new state.
      * @param {string|number} itemKey
      * @param {boolean} makeActive
      */
     async function handleToggle(itemKey, makeActive) {
         const kind = classifyItemKey(itemKey);
 
-        if (kind === 'lore') {
-            const loreId = String(itemKey).slice('lore:'.length);
-            const loreRecord = catalog.lore.find(l => String(l.loreId) === loreId);
-            if (loreRecord) {
-                // Optimistic synchronous write BEFORE any await: modal.js calls
-                // onActivate/onDeactivate fire-and-forget and re-renders immediately
-                // afterward (see modal.js's JSDoc on openModal), so state must already
-                // be correct the instant this function returns. activateScenario/
-                // deactivateScenario (lib/scenarioBooks.js) only write the real,
-                // authoritative record (including `book`) after their own internal
-                // awaits -- too late for that synchronous re-render. Spread the
-                // existing record (if any) rather than replacing it wholesale so a
-                // reactivation's `book` field survives for activateScenario's own
-                // existingRecord.book === bookName reuse check; the subsequent await
-                // below overwrites/confirms this placeholder with the real result.
-                settings.scenarioBooks[loreId] = { ...(settings.scenarioBooks[loreId] ?? {}), active: makeActive };
-
-                const stContext = getStContext();
-                if (makeActive) {
-                    const sandbox = await ensureSandbox(settings);
-                    await activateScenario(stContext, sandbox.callFunction, settings, loreRecord);
-                } else {
-                    await deactivateScenario(stContext, settings, loreRecord);
-                }
-            }
-        } else if (kind === 'collection') {
+        if (kind === 'collection') {
             const key = String(itemKey);
             const existing = settings.collections[key];
             settings.collections[key] = {
                 active: makeActive,
                 source: existing?.source ?? (settings.localCollections[key] ? 'local' : 'registrar'),
             };
-            await syncBooks(settings);
         } else {
             settings.itemStates[itemKey] = makeActive ? 'active' : 'inactive';
-            await syncBooks(settings);
         }
+        await syncBooks(settings);
 
         getStContext().saveSettingsDebounced();
         // No re-render call here: lib/ui/modal.js's own renderCurrentTab/
@@ -238,51 +183,27 @@ async function initModal(settings) {
      * would call syncBooks once per selected item, needlessly rebuilding the
      * shared roster/location-list entries (and the single consolidated
      * Character Roster entry Weyland-WeyPhone depends on) N times instead of
-     * once. Lore/scenario items are the one exception: each owns a separate,
-     * uniquely-named book with nothing shared to batch, so they still
-     * activate individually, run concurrently via Promise.all rather than
-     * sequentially.
+     * once.
      * @param {Array<string>} itemKeys
      * @param {boolean} makeActive
      */
     async function handleBulkToggle(itemKeys, makeActive) {
-        const loreKeys = [];
-        let needsSync = false;
-
         for (const itemKey of itemKeys) {
             const kind = classifyItemKey(itemKey);
-            if (kind === 'lore') {
-                loreKeys.push(itemKey);
-            } else if (kind === 'collection') {
+            if (kind === 'collection') {
                 const key = String(itemKey);
                 const existing = settings.collections[key];
                 settings.collections[key] = {
                     active: makeActive,
                     source: existing?.source ?? (settings.localCollections[key] ? 'local' : 'registrar'),
                 };
-                needsSync = true;
             } else {
                 settings.itemStates[itemKey] = makeActive ? 'active' : 'inactive';
-                needsSync = true;
             }
         }
 
-        const stContext = getStContext();
-        const loreWork = Promise.all(loreKeys.map(async (itemKey) => {
-            const loreId = String(itemKey).slice('lore:'.length);
-            const loreRecord = catalog.lore.find((l) => String(l.loreId) === loreId);
-            if (!loreRecord) return;
-            settings.scenarioBooks[loreId] = { ...(settings.scenarioBooks[loreId] ?? {}), active: makeActive };
-            if (makeActive) {
-                const sandbox = await ensureSandbox(settings);
-                await activateScenario(stContext, sandbox.callFunction, settings, loreRecord);
-            } else {
-                await deactivateScenario(stContext, settings, loreRecord);
-            }
-        }));
-
-        await Promise.all([needsSync ? syncBooks(settings) : Promise.resolve(), loreWork]);
-        stContext.saveSettingsDebounced();
+        if (itemKeys.length) await syncBooks(settings);
+        getStContext().saveSettingsDebounced();
     }
 
     /**
@@ -298,15 +219,6 @@ async function initModal(settings) {
         const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call -- see Step 4's note
         const routingKind = classifyItemKey(itemKey);
 
-        if (routingKind === 'lore') {
-            const loreId = String(itemKey).slice('lore:'.length);
-            const record = catalog.lore.find(l => String(l.loreId) === loreId) ?? {};
-            return {
-                itemKey, kind: 'lore', record,
-                isActive: !!settings.scenarioBooks[loreId]?.active,
-                forced: 'none',
-            };
-        }
         if (routingKind === 'collection') {
             const key = String(itemKey);
             const isLocal = !!settings.localCollections[key];
@@ -394,25 +306,23 @@ async function initModal(settings) {
             // every fetched record kind carries these uniformly (see
             // lib/ui/sortItems.js's own doc comment), but a bare
             // {itemKey, name, summary} projection was silently dropping them,
-            // making Sort by Created/Updated/Author a no-op on these two tabs
+            // making Sort by Created/Updated/Author a no-op on this tab
             // (findings review, Task 9 follow-up). itemKey is assigned last so
             // it always wins over any same-named field on the raw record.
             if (type === 'collection') return catalog.collections.map(c => ({ ...c, itemKey: c.collectionId }));
-            if (type === 'lore') return catalog.lore.map(l => ({ ...l, itemKey: `lore:${l.loreId}` }));
             if (type === 'local') return Object.entries(settings.localCollections).map(([id, c]) => ({ itemKey: id, name: c.name }));
             return [];
         },
         resolveActive: (itemKey) => {
             const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call, not the outer initModal-scoped snapshot
             const kind = classifyItemKey(itemKey);
-            if (kind === 'lore') return !!settings.scenarioBooks[String(itemKey).slice('lore:'.length)]?.active;
             if (kind === 'collection') return !!resolvedCollections[String(itemKey)]?.active;
             return resolveItemActive(itemKey, settings.itemStates, resolvedCollections);
         },
         resolveForced: (itemKey) => {
             // Only individual characters/locations carry a forced tri-state
-            // override (spec S9) -- collections and lore/scenario items have
-            // no forced concept, so they never show a "Pinned" badge.
+            // override (spec S9) -- collections have no forced concept, so
+            // they never show a "Pinned" badge.
             return classifyItemKey(itemKey) === 'item' ? (settings.itemStates[itemKey] ?? 'none') : 'none';
         },
         onActivate: (itemKey) => handleToggle(itemKey, true),

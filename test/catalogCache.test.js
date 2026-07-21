@@ -23,14 +23,12 @@ test('round-trips characters', async () => {
     assert.deepEqual(await cache.getCharacters(), records);
 });
 
-test('round-trips locations, collections, and lore independently', async () => {
+test('round-trips locations and collections independently', async () => {
     const cache = createCatalogCache(createInMemoryStorageEngine());
     await cache.setLocations([{ locationId: '1' }]);
     await cache.setCollections([{ collectionId: '1' }]);
-    await cache.setLore([{ loreId: '1' }]);
     assert.deepEqual(await cache.getLocations(), [{ locationId: '1' }]);
     assert.deepEqual(await cache.getCollections(), [{ collectionId: '1' }]);
-    assert.deepEqual(await cache.getLore(), [{ loreId: '1' }]);
     assert.equal(await cache.getCharacters(), undefined);
 });
 
