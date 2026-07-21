@@ -404,6 +404,8 @@ async function initModal(settings) {
         onRenameLocalCollection,
         onUpdateLocalCollectionMembers,
         onDeleteLocalCollection,
+        onBulkActivate: (itemKeys) => handleBulkToggle(itemKeys, true),
+        onBulkDeactivate: (itemKeys) => handleBulkToggle(itemKeys, false),
     });
 }
 
