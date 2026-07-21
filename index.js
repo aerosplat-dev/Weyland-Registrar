@@ -212,6 +212,60 @@ async function initModal(settings) {
     }
 
     /**
+     * Batched version of handleToggle for the bulk-selection action bar.
+     * Mutates every selected item/collection's state synchronously first,
+     * then calls syncBooks exactly once -- looping handleToggle here instead
+     * would call syncBooks once per selected item, needlessly rebuilding the
+     * shared roster/location-list entries (and the single consolidated
+     * Character Roster entry Weyland-WeyPhone depends on) N times instead of
+     * once. Lore/scenario items are the one exception: each owns a separate,
+     * uniquely-named book with nothing shared to batch, so they still
+     * activate individually, run concurrently via Promise.all rather than
+     * sequentially.
+     * @param {Array<string>} itemKeys
+     * @param {boolean} makeActive
+     */
+    async function handleBulkToggle(itemKeys, makeActive) {
+        const loreKeys = [];
+        let needsSync = false;
+
+        for (const itemKey of itemKeys) {
+            const kind = classifyItemKey(itemKey);
+            if (kind === 'lore') {
+                loreKeys.push(itemKey);
+            } else if (kind === 'collection') {
+                const key = String(itemKey);
+                const existing = settings.collections[key];
+                settings.collections[key] = {
+                    active: makeActive,
+                    source: existing?.source ?? (settings.localCollections[key] ? 'local' : 'registrar'),
+                };
+                needsSync = true;
+            } else {
+                settings.itemStates[itemKey] = makeActive ? 'active' : 'inactive';
+                needsSync = true;
+            }
+        }
+
+        const stContext = getStContext();
+        const loreWork = Promise.all(loreKeys.map(async (itemKey) => {
+            const loreId = String(itemKey).slice('lore:'.length);
+            const loreRecord = catalog.lore.find((l) => String(l.loreId) === loreId);
+            if (!loreRecord) return;
+            settings.scenarioBooks[loreId] = { ...(settings.scenarioBooks[loreId] ?? {}), active: makeActive };
+            if (makeActive) {
+                const sandbox = await ensureSandbox(settings);
+                await activateScenario(stContext, sandbox.callFunction, settings, loreRecord);
+            } else {
+                await deactivateScenario(stContext, settings, loreRecord);
+            }
+        }));
+
+        await Promise.all([needsSync ? syncBooks(settings) : Promise.resolve(), loreWork]);
+        stContext.saveSettingsDebounced();
+    }
+
+    /**
      * Resolves the full detail-pane payload for a single itemKey. Computes
      * its own fresh `resolvedCollections` snapshot on every call (same fix
      * as `resolveActive` below) so a collection's own toggle is reflected
