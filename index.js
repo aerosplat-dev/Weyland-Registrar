@@ -2,7 +2,7 @@
 import { resolveExtensionBasePath } from './lib/location.js';
 import { getSettings } from './lib/settings.js';
 import { injectToolbarButton } from './lib/ui/toolbarButton.js';
-import { openModal, showModalLoading } from './lib/ui/modal.js';
+import { openModal, showModalLoading, showModalError } from './lib/ui/modal.js';
 import { createCatalogCache, createIndexedDbStorageEngine } from './lib/catalogCache.js';
 import { fetchCharacterList, fetchLocationList, fetchCollectionList, toItemKey, buildSearchBlob } from './lib/registrarApi.js';
 import { createEntrySandbox } from './lib/entrySandbox.js';
@@ -141,10 +141,22 @@ async function initModal(settings) {
         try {
             await ensureCatalogFresh(settings);
         } catch (error) {
-            // Still proceed to open the modal even if this failed -- readCatalog()
-            // below just returns whatever's cached (possibly still empty), and the
-            // user's own manual "Refresh Catalog" button remains available to retry.
             console.error('[Weyland-Registrar] Failed to populate catalog before opening modal:', error);
+            // If there's truly nothing cached to fall back on, show a real
+            // error state instead of silently rendering an empty list --
+            // confirmed live that a fetch failure with no cached data looks
+            // EXACTLY like "nothing to show" to a real user otherwise (no
+            // error text anywhere in the DOM, console.error invisible
+            // without devtools open). If some (stale) data IS already
+            // cached, fall through and show that instead -- still useful,
+            // no need for a hard error state.
+            if (!(await catalogCache.getCharacters())) {
+                await showModalError(
+                    "Couldn't reach the Registrar. Check your connection and try again.",
+                    () => initModal(settings),
+                );
+                return;
+            }
         }
     }
 
@@ -361,16 +373,42 @@ async function initModal(settings) {
             // and the list previously stayed showing stale/old data with zero
             // indication a refresh was even happening.
             await showModalLoading();
+            let catalogFetchFailed = false;
             try {
                 await refreshCatalog(settings);
-                await syncBooks(settings);
             } catch (error) {
                 console.error('[Weyland-Registrar] Manual catalog refresh failed:', error);
+                catalogFetchFailed = true;
             }
-            // Always return to a real view, whether the refresh succeeded or
-            // not -- otherwise a failure here would leave the user stuck
-            // staring at the loading spinner forever, which is worse than
-            // falling back to whatever (possibly stale) data is still cached.
+            if (catalogFetchFailed) {
+                if (!(await catalogCache.getCharacters())) {
+                    // Nothing to fall back on -- show a real error state
+                    // rather than a silently-empty list (same reasoning as
+                    // initModal's own catalog-ensure gate above).
+                    await showModalError(
+                        "Couldn't reach the Registrar. Check your connection and try again.",
+                        () => initModal(settings),
+                    );
+                    return;
+                }
+                // Some (stale) data is still cached and worth showing -- a
+                // toast is enough here, no need for a hard error takeover.
+                toastr.error('Failed to refresh the Registrar catalog. Showing previously cached data.', 'Weyland Registrar');
+            } else {
+                // Catalog fetch succeeded -- syncBooks (rebuilding the WI
+                // books) is a separate concern from what the browsing list
+                // shows, so its own failure doesn't block reopening the list.
+                try {
+                    await syncBooks(settings);
+                } catch (error) {
+                    console.error('[Weyland-Registrar] syncBooks failed after a successful catalog refresh:', error);
+                    toastr.error('Catalog refreshed, but writing the World Info books failed. Try refreshing again.', 'Weyland Registrar');
+                }
+            }
+            // Always return to a real view -- otherwise a failure here would
+            // leave the user stuck staring at the loading spinner forever,
+            // which is worse than falling back to whatever (possibly stale)
+            // data is still cached.
             await initModal(settings);
         },
         getItemDetail,
