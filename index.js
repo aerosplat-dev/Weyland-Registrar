@@ -105,6 +105,67 @@ async function syncBooks(settings) {
 }
 
 /**
+ * Forces a fresh catalog fetch (bypassing the staleness check
+ * ensureCatalogFresh applies) and syncs the WI books from it, always
+ * returning to a real modal view afterward. Shared by the manual "Refresh
+ * Catalog" button AND the error view's Retry button -- both express the
+ * same intent ("try that failed/stale fetch again"). Retry previously
+ * pointed at `initModal` instead, which only re-runs the lighter
+ * emptiness/staleness gate (`ensureCatalogFresh`) and never calls
+ * `syncBooks` -- so a successful Retry would repopulate the browsing list
+ * but silently leave the actual World Info books (which other systems,
+ * e.g. Weyland-WeyPhone's Character Roster entry, depend on) unsynced.
+ * Routing both actions through this one function closes that gap.
+ * @param {object} settings
+ * @returns {Promise<void>}
+ */
+async function refreshCatalogAndSync(settings) {
+    // Show the loading state immediately -- a manual refresh can take
+    // several seconds on a real connection (confirmed live: ~9s under
+    // simulated latency, mostly the loci/coll CORS-fallback double-hop),
+    // and the list previously stayed showing stale/old data with zero
+    // indication a refresh was even happening.
+    await showModalLoading();
+    let catalogFetchFailed = false;
+    try {
+        await refreshCatalog(settings);
+    } catch (error) {
+        console.error('[Weyland-Registrar] Catalog refresh failed:', error);
+        catalogFetchFailed = true;
+    }
+    if (catalogFetchFailed) {
+        if (!(await catalogCache.getCharacters())) {
+            // Nothing to fall back on -- show a real error state rather
+            // than a silently-empty list. Retry re-invokes this exact same
+            // function, so it behaves identically to clicking Refresh
+            // Catalog again, not a narrower re-check.
+            await showModalError(
+                "Couldn't reach the Registrar. Check your connection and try again.",
+                () => refreshCatalogAndSync(settings),
+            );
+            return;
+        }
+        // Some (stale) data is still cached and worth showing -- a toast is
+        // enough here, no need for a hard error takeover.
+        toastr.error('Failed to refresh the Registrar catalog. Showing previously cached data.', 'Weyland Registrar');
+    } else {
+        // Catalog fetch succeeded -- syncBooks (rebuilding the WI books) is
+        // a separate concern from what the browsing list shows, so its own
+        // failure doesn't block reopening the list.
+        try {
+            await syncBooks(settings);
+        } catch (error) {
+            console.error('[Weyland-Registrar] syncBooks failed after a successful catalog refresh:', error);
+            toastr.error('Catalog refreshed, but writing the World Info books failed. Try refreshing again.', 'Weyland Registrar');
+        }
+    }
+    // Always return to a real view -- otherwise a failure here would leave
+    // the user stuck staring at the loading spinner forever, which is worse
+    // than falling back to whatever (possibly stale) data is still cached.
+    await initModal(settings);
+}
+
+/**
  * Classifies a modal itemKey by which activation mechanism owns it.
  *
  * itemList.js's click handler only ever passes item.itemKey back to
@@ -151,9 +212,13 @@ async function initModal(settings) {
             // cached, fall through and show that instead -- still useful,
             // no need for a hard error state.
             if (!(await catalogCache.getCharacters())) {
+                // Retry goes through the same forced-fetch-plus-syncBooks
+                // path as the manual Refresh Catalog button, not a plain
+                // re-invocation of initModal -- see refreshCatalogAndSync's
+                // own doc comment for why that distinction matters.
                 await showModalError(
                     "Couldn't reach the Registrar. Check your connection and try again.",
-                    () => initModal(settings),
+                    () => refreshCatalogAndSync(settings),
                 );
                 return;
             }
@@ -366,51 +431,7 @@ async function initModal(settings) {
         },
         onActivate: (itemKey) => handleToggle(itemKey, true),
         onDeactivate: (itemKey) => handleToggle(itemKey, false),
-        onRefreshCatalog: async () => {
-            // Show the loading state immediately -- a manual refresh can take
-            // several seconds on a real connection (confirmed live: ~9s under
-            // simulated latency, mostly the loci/coll CORS-fallback double-hop),
-            // and the list previously stayed showing stale/old data with zero
-            // indication a refresh was even happening.
-            await showModalLoading();
-            let catalogFetchFailed = false;
-            try {
-                await refreshCatalog(settings);
-            } catch (error) {
-                console.error('[Weyland-Registrar] Manual catalog refresh failed:', error);
-                catalogFetchFailed = true;
-            }
-            if (catalogFetchFailed) {
-                if (!(await catalogCache.getCharacters())) {
-                    // Nothing to fall back on -- show a real error state
-                    // rather than a silently-empty list (same reasoning as
-                    // initModal's own catalog-ensure gate above).
-                    await showModalError(
-                        "Couldn't reach the Registrar. Check your connection and try again.",
-                        () => initModal(settings),
-                    );
-                    return;
-                }
-                // Some (stale) data is still cached and worth showing -- a
-                // toast is enough here, no need for a hard error takeover.
-                toastr.error('Failed to refresh the Registrar catalog. Showing previously cached data.', 'Weyland Registrar');
-            } else {
-                // Catalog fetch succeeded -- syncBooks (rebuilding the WI
-                // books) is a separate concern from what the browsing list
-                // shows, so its own failure doesn't block reopening the list.
-                try {
-                    await syncBooks(settings);
-                } catch (error) {
-                    console.error('[Weyland-Registrar] syncBooks failed after a successful catalog refresh:', error);
-                    toastr.error('Catalog refreshed, but writing the World Info books failed. Try refreshing again.', 'Weyland Registrar');
-                }
-            }
-            // Always return to a real view -- otherwise a failure here would
-            // leave the user stuck staring at the loading spinner forever,
-            // which is worse than falling back to whatever (possibly stale)
-            // data is still cached.
-            await initModal(settings);
-        },
+        onRefreshCatalog: () => refreshCatalogAndSync(settings),
         getItemDetail,
         getAvailableItemsForForm,
         onCreateLocalCollection,
