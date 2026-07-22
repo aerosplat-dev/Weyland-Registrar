@@ -100,8 +100,19 @@ async function syncBooks(settings) {
     const charactersByKey = Object.fromEntries(catalog.characters.map(r => [r.itemKey, r]));
     const locationsByKey = Object.fromEntries(catalog.locations.map(r => [r.itemKey, r]));
 
-    await syncCharacterBook(stContext, sandbox.callFunction, settingsForSync, charactersByKey);
-    await syncLocationBook(stContext, sandbox.callFunction, settingsForSync, locationsByKey);
+    const [characterBookBackup, locationBookBackup] = await Promise.all([
+        syncCharacterBook(stContext, sandbox.callFunction, settingsForSync, charactersByKey),
+        syncLocationBook(stContext, sandbox.callFunction, settingsForSync, locationsByKey),
+    ]);
+
+    // Surfaced so a user isn't left wondering where their pre-existing
+    // content went -- ensureBookOwnership (bookOwnership.js) only backs up
+    // when a same-named book had real content but no Weyland-Registrar
+    // marker, i.e. this fires at most once per book (the rebuilt book
+    // carries the marker from here on, so every later sync is a no-op here).
+    for (const backupName of [characterBookBackup, locationBookBackup].filter(Boolean)) {
+        toastr.info(`Found existing content in a Registrar-managed lorebook without our marker, so it was backed up as "${backupName}" before being replaced.`, 'Weyland Registrar');
+    }
 }
 
 /**

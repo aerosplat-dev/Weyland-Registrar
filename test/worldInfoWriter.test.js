@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { syncCharacterBook, syncLocationBook, CHARACTER_BOOK_NAME, LOCATION_BOOK_NAME } from '../lib/worldInfoWriter.js';
-import { ROSTER_UID, LOCATION_LIST_UID, characterEntryUids } from '../lib/uidScheme.js';
+import { ROSTER_UID, LOCATION_LIST_UID, MARKER_UID, characterEntryUids } from '../lib/uidScheme.js';
+import { buildMarkerEntry } from '../lib/bookOwnership.js';
 
 function fakeStContext() {
     const books = {};
@@ -81,11 +82,15 @@ test('syncCharacterBook activates the book via /world after writing', async () =
 test('syncCharacterBook removes entries for a character that becomes inactive', async () => {
     const stContext = fakeStContext();
     const uids = characterEntryUids(0);
+    // Carries the marker already -- this fixture simulates a normal resync
+    // of a book this extension already owns, not a foreign-content
+    // collision (see bookOwnership.test.js for that case).
     stContext.books[CHARACTER_BOOK_NAME] = {
         entries: {
             [uids.info]: { uid: uids.info, comment: 'Maeve' },
             [uids.end]: { uid: uids.end, comment: 'Maeve End Section' },
             [ROSTER_UID]: { uid: ROSTER_UID, comment: 'Character Roster', content: 'stale' },
+            [MARKER_UID]: buildMarkerEntry(),
         },
     };
     const settings = { itemStates: { 'char:1': 'inactive' }, collections: {} };
@@ -122,4 +127,48 @@ test('syncLocationBook writes to the correct book name', async () => {
     });
     assert.ok(stContext.books[LOCATION_BOOK_NAME]);
     assert.ok(stContext.books[LOCATION_BOOK_NAME].entries[LOCATION_LIST_UID]);
+});
+
+test('syncCharacterBook always writes the ownership marker alongside real entries', async () => {
+    const stContext = fakeStContext();
+    const settings = { itemStates: {}, collections: {} };
+    await syncCharacterBook(stContext, fakeCallFunction(), settings, {});
+    assert.ok(stContext.books[CHARACTER_BOOK_NAME].entries[MARKER_UID]);
+});
+
+test('syncCharacterBook backs up foreign pre-existing content (no marker) before taking over, and returns the backup name', async () => {
+    const stContext = fakeStContext();
+    stContext.books[CHARACTER_BOOK_NAME] = {
+        entries: {
+            42: { uid: 42, comment: 'A user-authored entry unrelated to this extension', content: 'Some homebrew lore.' },
+        },
+    };
+    const settings = { itemStates: { 'char:1': 'active' }, collections: {} };
+
+    const backupName = await syncCharacterBook(stContext, fakeCallFunction(), settings, {
+        'char:1': { characterId: '1', name: 'Maeve', species: '', gender: '', onlineHandle: '', schoolYear: '', dwelling: '' },
+    });
+
+    assert.ok(backupName, 'returns the backup book name');
+    assert.notEqual(backupName, CHARACTER_BOOK_NAME);
+    // The original foreign content survives, untouched, under the backup name.
+    assert.deepEqual(stContext.books[backupName].entries[42], { uid: 42, comment: 'A user-authored entry unrelated to this extension', content: 'Some homebrew lore.' });
+    // The primary book was rebuilt fresh and now carries the marker.
+    assert.ok(stContext.books[CHARACTER_BOOK_NAME].entries[MARKER_UID]);
+    assert.equal(stContext.books[CHARACTER_BOOK_NAME].entries[42], undefined);
+});
+
+test('syncCharacterBook does not back up when there is no pre-existing content to lose', async () => {
+    const stContext = fakeStContext();
+    const settings = { itemStates: {}, collections: {} };
+    const backupName = await syncCharacterBook(stContext, fakeCallFunction(), settings, {});
+    assert.equal(backupName, null);
+});
+
+test('syncCharacterBook does not re-back-up a book it already owns', async () => {
+    const stContext = fakeStContext();
+    const settings = { itemStates: {}, collections: {} };
+    await syncCharacterBook(stContext, fakeCallFunction(), settings, {}); // first sync: takes ownership
+    const backupName = await syncCharacterBook(stContext, fakeCallFunction(), settings, {}); // second sync: already ours
+    assert.equal(backupName, null);
 });
