@@ -38,6 +38,24 @@ test('buildDetailFields for a character includes personality, appearance, and ta
     ]);
 });
 
+test('buildDetailFields for a character places Dorm Room/Housing between Species/Gender/Age and Personality', () => {
+    const fields = buildDetailFields({
+        species: 'Usagimimi', gender: 'Female', baseAge: '20',
+        dwelling: "O'See Hall, Room 103",
+        personality: 'Bubbly and outgoing.',
+    }, 'character');
+    assert.deepEqual(fields, [
+        { label: 'Species / Gender / Age', value: 'Usagimimi · Female · 20' },
+        { label: 'Dorm Room/Housing', value: "O'See Hall, Room 103" },
+        { label: 'Personality', value: 'Bubbly and outgoing.' },
+    ]);
+});
+
+test('buildDetailFields for a character omits the Dorm Room/Housing line when dwelling is empty', () => {
+    const fields = buildDetailFields({ dwelling: '', personality: 'Kind.' }, 'character');
+    assert.equal(fields.some(f => f.label === 'Dorm Room/Housing'), false);
+});
+
 test('buildDetailFields omits empty optional fields for a character', () => {
     const fields = buildDetailFields({ personality: 'Kind.' }, 'character');
     assert.deepEqual(fields, [{ label: 'Personality', value: 'Kind.' }]);
@@ -79,6 +97,19 @@ test('buildDetailFields includes an Author field for a registrar collection when
 
 test('buildDetailFields omits the Author field for a local collection (no ownerName -- user-created)', () => {
     assert.deepEqual(buildDetailFields({ name: 'My Cast' }, 'local'), []);
+});
+
+test('buildRevealableFields relationships section returns Relationships', () => {
+    const fields = buildRevealableFields({
+        relationships: 'Roommate: Loxley.',
+        knownBackground: 'Should not appear here',
+    }, 'relationships');
+    assert.deepEqual(fields, [{ label: 'Relationships', value: 'Roommate: Loxley.' }]);
+});
+
+test('buildRevealableFields relationships section omits the field when empty', () => {
+    const fields = buildRevealableFields({ relationships: '' }, 'relationships');
+    assert.deepEqual(fields, []);
 });
 
 test('buildRevealableFields background section returns Background and Background Friends, in order', () => {
