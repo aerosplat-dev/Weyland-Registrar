@@ -24,6 +24,69 @@ test('buildSearchBlob lowercases and flattens relevant character fields', () => 
     assert.match(blob.tags, /a/);
 });
 
+test('buildSearchBlob sets type so a "type:location"/"type:character" filter term (used by real Registrar collections) works', () => {
+    assert.equal(buildSearchBlob({}, 'character').type, 'character');
+    assert.equal(buildSearchBlob({}, 'location').type, 'location');
+});
+
+// Field-for-field port of the Registrar's own makeCharacterSearchable
+// (base.js) -- a narrower hand-picked field set was shipped first and found
+// to under-match real collection filters, confirmed live against the real
+// site (see collectionResolver.js's doc comment). "WUPD" is a filter that,
+// on the real site, only matches via personality/relationships/room/
+// backgroundKeywords/onlineHandle/outfitEntries -- none of which are in
+// name/surname/summary.
+test('buildSearchBlob for a character includes personality/relationships/room/backgroundKeywords/onlineHandle/outfits in the master field', () => {
+    const blob = buildSearchBlob({
+        personality: 'WUPD officer energy',
+        relationships: 'Partners with the WUPD academy',
+        room: 'WUPD dorm room',
+        backgroundKeywords: 'WUPD, Police Academy',
+        onlineHandle: 'Officer_WUPD',
+        outfitEntries: JSON.stringify([{ name: 'WUPD Duty Uniform', description: 'Tan patrol shirt' }]),
+    }, 'character');
+    assert.match(blob.master, /wupd officer energy/);
+    assert.match(blob.master, /partners with the wupd academy/);
+    assert.match(blob.master, /wupd dorm room/);
+    assert.match(blob.master, /wupd, police academy/);
+    assert.match(blob.master, /officer_wupd/);
+    assert.match(blob.master, /wupd duty uniform/);
+});
+
+test('buildSearchBlob for a character falls back to legacy flat outfit fields when outfitEntries is absent', () => {
+    const blob = buildSearchBlob({ casualOutfit: 'Blue jacket' }, 'character');
+    assert.match(blob.outfits, /blue jacket/);
+    assert.match(blob.master, /blue jacket/);
+});
+
+test('buildSearchBlob for a character composes home/background/secrets from their constituent fields', () => {
+    const blob = buildSearchBlob({
+        dwelling: 'Sterling Hall', bathroomNeighbours: 'Maeve', room: 'Room 4',
+        backgroundKeywords: 'rural', knownBackground: 'Farm life', backgroundFriends: 'Sven', hiddenBackground: 'Runaway',
+        secretsKeywords: 'romance', secrets: 'Reads trashy novels',
+    }, 'character');
+    assert.equal(blob.home, 'sterling hall maeve room 4');
+    assert.equal(blob.background, 'rural farm life sven runaway');
+    assert.equal(blob.secrets, 'romance reads trashy novels');
+});
+
+test('buildSearchBlob for a location includes description/denizens/events/keywords/subLocations', () => {
+    const blob = buildSearchBlob({
+        description: 'A cozy bookstore', denizens: 'Nook the cat', events: 'Poetry night', extraKeys: 'reading, quiet',
+        subLocations: JSON.stringify([{ name: 'Back Room', extraKeys: 'storage', description: 'Dusty shelves' }]),
+    }, 'location');
+    assert.match(blob.master, /a cozy bookstore/);
+    assert.match(blob.master, /nook the cat/);
+    assert.match(blob.master, /poetry night/);
+    assert.match(blob.master, /reading, quiet/);
+    assert.equal(blob.subLocations, 'back room storage dusty shelves');
+});
+
+test('buildSearchBlob never throws on malformed outfitEntries/subLocations JSON', () => {
+    assert.doesNotThrow(() => buildSearchBlob({ outfitEntries: 'not-json' }, 'character'));
+    assert.doesNotThrow(() => buildSearchBlob({ subLocations: 'not-json' }, 'location'));
+});
+
 test('fetchCharacterList calls /data/list directly with no proxy', async () => {
     let calledUrl = null;
     const fakeFetch = async (url) => {
