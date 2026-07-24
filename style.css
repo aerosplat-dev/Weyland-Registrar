@@ -444,7 +444,7 @@
     text-overflow: ellipsis;
 }
 
-.wreg-forced-badge {
+.wreg-collection-badge {
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -453,6 +453,66 @@
     border: 1px solid rgba(180, 38, 58, 0.4);
     border-radius: 4px;
     flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+
+.wreg-detail-collection-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: -4px 0 8px;
+}
+
+.wreg-detail-collection-badges .wreg-collection-badge {
+    max-width: none;
+}
+
+.wreg-pin-btn {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.4;
+    filter: grayscale(1);
+    transition: opacity 0.15s ease, filter 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.wreg-pin-btn:hover {
+    opacity: 0.75;
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.wreg-pin-btn:active {
+    transform: scale(0.92);
+}
+
+.wreg-pin-btn-active {
+    opacity: 1;
+    filter: none;
+    border-color: var(--wreg-accent-soft);
+    background: rgba(180, 38, 58, 0.12);
+}
+
+.wreg-pin-btn-active:hover {
+    opacity: 1;
+    border-color: var(--wreg-text-accent-bright);
+}
+
+.wreg-pin-btn-detail {
+    width: auto;
+    padding: 0 10px;
 }
 
 .wreg-row-toggle {
@@ -667,7 +727,8 @@
     .wreg-tab,
     .wreg-item-row,
     .wreg-toggle-track,
-    .wreg-toggle-thumb {
+    .wreg-toggle-thumb,
+    .wreg-pin-btn {
         transition: none;
     }
 

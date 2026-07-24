@@ -7,7 +7,7 @@ import { createCatalogCache, createIndexedDbStorageEngine } from './lib/catalogC
 import { fetchCharacterList, fetchLocationList, fetchCollectionList, toItemKey, buildSearchBlob } from './lib/registrarApi.js';
 import { createEntrySandbox } from './lib/entrySandbox.js';
 import { syncCharacterBook, syncLocationBook } from './lib/worldInfoWriter.js';
-import { resolveItemActive } from './lib/activationState.js';
+import { resolveItemActive, resolveActiveCollectionNames } from './lib/activationState.js';
 import { resolveCollectionMembers } from './lib/collectionResolver.js';
 import { createLocalCollection, renameLocalCollection, updateLocalCollectionMembers, deleteLocalCollection } from './lib/localCollections.js';
 
@@ -45,10 +45,18 @@ function buildResolvedCollections(settings, catalog) {
     const result = {};
     for (const [id, collectionState] of Object.entries(settings.collections)) {
         if (settings.localCollections[id]) {
-            result[id] = { active: !!collectionState.active, memberKeys: settings.localCollections[id].memberKeys };
+            result[id] = {
+                active: !!collectionState.active,
+                memberKeys: settings.localCollections[id].memberKeys,
+                name: settings.localCollections[id].name,
+            };
         } else {
             const record = (catalog.collections ?? []).find(c => String(c.collectionId) === id);
-            result[id] = { active: !!collectionState.active, memberKeys: record ? resolveCollectionMembers(record, catalog) : [] };
+            result[id] = {
+                active: !!collectionState.active,
+                memberKeys: record ? resolveCollectionMembers(record, catalog) : [],
+                name: record?.name ?? 'Unknown collection',
+            };
         }
     }
     return result;
@@ -361,6 +369,7 @@ async function initModal(settings) {
                 itemKey, kind: isLocal ? 'local' : 'collection', record,
                 isActive: !!resolvedCollections[key]?.active,
                 forced: 'none',
+                activeCollectionNames: [], // a collection can't itself be "a member of" another collection
                 memberNames,
                 memberKeys,
                 isLocal,
@@ -382,6 +391,7 @@ async function initModal(settings) {
             itemKey, kind: detailKind, record,
             isActive: resolveItemActive(itemKey, settings.itemStates, resolvedCollections),
             forced: settings.itemStates[itemKey] ?? 'none',
+            activeCollectionNames: resolveActiveCollectionNames(itemKey, resolvedCollections),
         };
     }
 
@@ -447,6 +457,13 @@ async function initModal(settings) {
             // (spec S9) -- collections have no forced concept, so they never
             // show a "Pinned" badge.
             return classifyItemKey(itemKey) === 'item' ? (settings.itemStates[itemKey] ?? 'none') : 'none';
+        },
+        resolveActiveCollections: (itemKey) => {
+            // Same item-only gating as resolveForced above -- a collection
+            // can't itself be "a member of" another collection.
+            if (classifyItemKey(itemKey) !== 'item') return [];
+            const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call, same reason as resolveActive above
+            return resolveActiveCollectionNames(itemKey, resolvedCollections);
         },
         onActivate: (itemKey) => handleToggle(itemKey, true),
         onDeactivate: (itemKey) => handleToggle(itemKey, false),
