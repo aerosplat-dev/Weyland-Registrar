@@ -185,7 +185,7 @@ async function refreshCatalogAndSync(settings) {
  * generic over itemKey). So this extension has to recover "what kind of
  * thing is this" from the key's own shape:
  *  - "char:"/"loc:" prefix (lib/registrarApi.js's toItemKey) -> an individual
- *    character/location, resolved via the tri-state model in
+ *    character/location, resolved via the forced-active-pin model in
  *    lib/activationState.js (spec S9): settings.itemStates[itemKey].
  *  - "local:" prefix (always, by construction -- see
  *    lib/localCollections.js's createLocalCollection) -> a local collection.
@@ -267,8 +267,14 @@ async function initModal(settings) {
                 active: makeActive,
                 source: existing?.source ?? (settings.localCollections[key] ? 'local' : 'registrar'),
             };
+        } else if (makeActive) {
+            settings.itemStates[itemKey] = 'active';
         } else {
-            settings.itemStates[itemKey] = makeActive ? 'active' : 'inactive';
+            // No forced-inactive pin exists anymore (see activationState.js)
+            // -- deactivating just clears any forced-active pin. If a
+            // collection still covers this item, it stays active; the only
+            // way to turn it off is to deactivate that collection.
+            delete settings.itemStates[itemKey];
         }
         await syncBooks(settings);
 
@@ -304,8 +310,10 @@ async function initModal(settings) {
                     active: makeActive,
                     source: existing?.source ?? (settings.localCollections[key] ? 'local' : 'registrar'),
                 };
+            } else if (makeActive) {
+                settings.itemStates[itemKey] = 'active';
             } else {
-                settings.itemStates[itemKey] = makeActive ? 'active' : 'inactive';
+                delete settings.itemStates[itemKey];
             }
         }
 
@@ -360,7 +368,7 @@ async function initModal(settings) {
         }
         // routingKind === 'item' -- classifyItemKey deliberately doesn't
         // distinguish character vs. location (it only needs to for routing,
-        // where both go through the same tri-state path); detailFields.js's
+        // where both go through the same forced-active-pin path); detailFields.js's
         // buildDetailFields DOES need that finer distinction, so derive it here
         // via the itemKey's own prefix rather than widening classifyItemKey's
         // job (found during Task 5/Task 7's review: passing classifyItemKey's
@@ -435,9 +443,9 @@ async function initModal(settings) {
             return resolveItemActive(itemKey, settings.itemStates, resolvedCollections);
         },
         resolveForced: (itemKey) => {
-            // Only individual characters/locations carry a forced tri-state
-            // override (spec S9) -- collections have no forced concept, so
-            // they never show a "Pinned" badge.
+            // Only individual characters/locations carry a forced-active pin
+            // (spec S9) -- collections have no forced concept, so they never
+            // show a "Pinned" badge.
             return classifyItemKey(itemKey) === 'item' ? (settings.itemStates[itemKey] ?? 'none') : 'none';
         },
         onActivate: (itemKey) => handleToggle(itemKey, true),

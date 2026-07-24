@@ -21,9 +21,14 @@ test('member of an inactive collection is not active from that collection alone'
     assert.equal(resolveItemActive('char:1', {}, collections), false);
 });
 
-test('forced-inactive overrides collection membership', () => {
+test('a legacy forced-inactive value (from before this override was removed) no longer overrides collection membership', () => {
     const collections = { c1: { active: true, memberKeys: ['char:1'] } };
-    assert.equal(resolveItemActive('char:1', { 'char:1': 'inactive' }, collections), false);
+    assert.equal(resolveItemActive('char:1', { 'char:1': 'inactive' }, collections), true);
+});
+
+test('forced-active protects a member from its collection deactivating', () => {
+    const collections = { c1: { active: false, memberKeys: ['char:1'] } };
+    assert.equal(resolveItemActive('char:1', { 'char:1': 'active' }, collections), true);
 });
 
 test('deactivating one collection does not affect a member still in another active collection', () => {

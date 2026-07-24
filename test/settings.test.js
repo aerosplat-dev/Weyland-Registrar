@@ -24,3 +24,12 @@ test('nested default objects are independent per extensionSettings instance', ()
     a.itemStates['char:1'] = 'active';
     assert.equal(b.itemStates['char:1'], undefined);
 });
+
+test('strips a legacy forced-inactive itemStates entry from a prior version of this extension', () => {
+    const extensionSettings = {
+        [MODULE_NAME]: { itemStates: { 'char:1': 'inactive', 'char:2': 'active' } },
+    };
+    const settings = getSettings(extensionSettings);
+    assert.equal(settings.itemStates['char:1'], undefined);
+    assert.equal(settings.itemStates['char:2'], 'active');
+});

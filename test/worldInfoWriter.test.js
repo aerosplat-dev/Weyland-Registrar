@@ -93,7 +93,11 @@ test('syncCharacterBook removes entries for a character that becomes inactive', 
             [MARKER_UID]: buildMarkerEntry(),
         },
     };
-    const settings = { itemStates: { 'char:1': 'inactive' }, collections: {} };
+    // No forced-active pin and no covering collection -- this is what "a
+    // character becomes inactive" actually looks like now that deactivating
+    // clears the itemStates entry rather than writing 'inactive' (see
+    // activationState.js).
+    const settings = { itemStates: {}, collections: {} };
     await syncCharacterBook(stContext, fakeCallFunction(), settings, {
         'char:1': { characterId: '1', name: 'Maeve', species: '', gender: '', onlineHandle: '', schoolYear: '', dwelling: '' },
     });
