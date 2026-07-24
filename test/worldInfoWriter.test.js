@@ -107,8 +107,8 @@ test('syncCharacterBook with zero active characters still writes an empty roster
     const settings = { itemStates: {}, collections: {} };
     await syncCharacterBook(stContext, fakeCallFunction(), settings, {});
     const book = stContext.books[CHARACTER_BOOK_NAME];
-    assert.match(book.entries[ROSTER_UID].content, /\[CHARACTER ROSTER\]/);
-    assert.match(book.entries[ROSTER_UID].content, /\[END CHARACTER ROSTER\]/);
+    assert.match(book.entries[ROSTER_UID].content, /\[ADDITIONAL CHARACTERS\]/);
+    assert.match(book.entries[ROSTER_UID].content, /\[END ADDITIONAL CHARACTERS\]/);
 });
 
 test('syncLocationBook writes to the correct book name', async () => {

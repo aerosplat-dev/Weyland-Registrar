@@ -5,8 +5,8 @@ import { buildCharacterRosterText, buildLocationListText } from '../lib/rosterBu
 
 test('empty roster still has header and footer', () => {
     const text = buildCharacterRosterText([]);
-    assert.match(text, /^\[CHARACTER ROSTER\]/);
-    assert.match(text, /\[END CHARACTER ROSTER\]$/);
+    assert.match(text, /^\[ADDITIONAL CHARACTERS\]/);
+    assert.match(text, /\[END ADDITIONAL CHARACTERS\]$/);
 });
 
 test('single character line matches the Registrar template exactly', () => {
@@ -47,7 +47,7 @@ test('location list line matches the Registrar template exactly', () => {
     const text = buildLocationListText([
         { name: "Mack's Autozone", summary: 'An old but lively auto repair shop.' },
     ]);
-    assert.match(text, /^\[LOCATIONS\]/);
+    assert.match(text, /^\[ADDITIONAL LOCATIONS\]/);
     assert.match(text, /Mack's Autozone: \(An old but lively auto repair shop\.\)/);
-    assert.match(text, /\[END LOCATIONS\]$/);
+    assert.match(text, /\[END ADDITIONAL LOCATIONS\]$/);
 });
