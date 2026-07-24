@@ -6,7 +6,8 @@ import { openModal, showModalLoading, showModalError } from './lib/ui/modal.js';
 import { createCatalogCache, createIndexedDbStorageEngine } from './lib/catalogCache.js';
 import { fetchCharacterList, fetchLocationList, fetchCollectionList, toItemKey, buildSearchBlob } from './lib/registrarApi.js';
 import { createEntrySandbox } from './lib/entrySandbox.js';
-import { syncCharacterBook, syncLocationBook } from './lib/worldInfoWriter.js';
+import { syncCharacterBook, syncLocationBook, CHARACTER_BOOK_NAME, LOCATION_BOOK_NAME } from './lib/worldInfoWriter.js';
+import { MARKER_UID } from './lib/uidScheme.js';
 import { resolveItemActive, resolveActiveCollectionNames } from './lib/activationState.js';
 import { resolveCollectionMembers } from './lib/collectionResolver.js';
 import { createLocalCollection, renameLocalCollection, updateLocalCollectionMembers, deleteLocalCollection } from './lib/localCollections.js';
@@ -97,14 +98,35 @@ async function readCatalog() {
     return { characters: characters ?? [], locations: locations ?? [], collections: collections ?? [] };
 }
 
-async function syncBooks(settings) {
+/**
+ * Common setup shared by every path that writes to the WI books: the
+ * current catalog, settings with collections resolved to concrete
+ * memberKeys, the entry-building sandbox, and SillyTavern's own context.
+ * @param {object} settings
+ * @returns {Promise<{catalog: object, settingsForSync: object, sandbox: {callFunction: Function}, stContext: object}>}
+ */
+async function prepareSync(settings) {
     const catalog = await readCatalog();
     const resolvedCollections = buildResolvedCollections(settings, catalog);
     const settingsForSync = { ...settings, collections: resolvedCollections };
-
     const sandbox = await ensureSandbox(settings);
     const stContext = getStContext();
+    return { catalog, settingsForSync, sandbox, stContext };
+}
 
+// Surfaced so a user isn't left wondering where their pre-existing content
+// went -- ensureBookOwnership (bookOwnership.js) only backs up when a
+// same-named book had real content but no Weyland-Registrar marker, i.e.
+// this fires at most once per book (the rebuilt book carries the marker
+// from here on, so every later sync is a no-op here).
+function notifyIfBackedUp(backupName) {
+    if (backupName) {
+        toastr.info(`Found existing content in a Registrar-managed lorebook without our marker, so it was backed up as "${backupName}" before being replaced.`, 'Weyland Registrar');
+    }
+}
+
+async function syncBooks(settings) {
+    const { catalog, settingsForSync, sandbox, stContext } = await prepareSync(settings);
     const charactersByKey = Object.fromEntries(catalog.characters.map(r => [r.itemKey, r]));
     const locationsByKey = Object.fromEntries(catalog.locations.map(r => [r.itemKey, r]));
 
@@ -113,14 +135,49 @@ async function syncBooks(settings) {
         syncLocationBook(stContext, sandbox.callFunction, settingsForSync, locationsByKey),
     ]);
 
-    // Surfaced so a user isn't left wondering where their pre-existing
-    // content went -- ensureBookOwnership (bookOwnership.js) only backs up
-    // when a same-named book had real content but no Weyland-Registrar
-    // marker, i.e. this fires at most once per book (the rebuilt book
-    // carries the marker from here on, so every later sync is a no-op here).
-    for (const backupName of [characterBookBackup, locationBookBackup].filter(Boolean)) {
-        toastr.info(`Found existing content in a Registrar-managed lorebook without our marker, so it was backed up as "${backupName}" before being replaced.`, 'Weyland Registrar');
+    notifyIfBackedUp(characterBookBackup);
+    notifyIfBackedUp(locationBookBackup);
+}
+
+/**
+ * The "Rebuild Lorebook" button's action: fully regenerates ONE book --
+ * never both, unlike syncBooks -- from the currently cached catalog (no
+ * network refetch). Since syncCharacterBook/syncLocationBook already never
+ * partially patch a book (every sync fully regenerates `entries` from the
+ * live active set, see worldInfoWriter.js's own doc), this is exactly the
+ * same rebuild that already happens silently after every activate/
+ * deactivate -- the only difference is it's user-triggered on demand, on
+ * just one tab's book, and always confirms completion with a toast (unlike
+ * syncBooks, which stays silent on success so routine toggles don't spam
+ * notifications).
+ * @param {object} settings
+ * @param {'character'|'location'} bookType
+ * @returns {Promise<void>}
+ */
+async function rebuildLorebook(settings, bookType) {
+    const { catalog, settingsForSync, sandbox, stContext } = await prepareSync(settings);
+    const backupName = bookType === 'character'
+        ? await syncCharacterBook(stContext, sandbox.callFunction, settingsForSync, Object.fromEntries(catalog.characters.map(r => [r.itemKey, r])))
+        : await syncLocationBook(stContext, sandbox.callFunction, settingsForSync, Object.fromEntries(catalog.locations.map(r => [r.itemKey, r])));
+
+    notifyIfBackedUp(backupName);
+    if (!backupName) {
+        toastr.success(`${bookType === 'character' ? 'Character' : 'Location'} lorebook rebuilt.`, 'Weyland Registrar');
     }
+}
+
+/**
+ * Live entry count in the real WI book for parity-checking against what
+ * the browsing list shows as active -- deliberately excludes the internal
+ * ownership marker (uid MARKER_UID, bookOwnership.js), which is never
+ * user-facing content.
+ * @param {'character'|'location'} bookType
+ * @returns {Promise<number>}
+ */
+async function getLorebookEntryCount(bookType) {
+    const bookName = bookType === 'character' ? CHARACTER_BOOK_NAME : LOCATION_BOOK_NAME;
+    const book = await getStContext().loadWorldInfo(bookName);
+    return Object.keys(book?.entries ?? {}).filter(uid => Number(uid) !== MARKER_UID).length;
 }
 
 /**
@@ -476,6 +533,8 @@ async function initModal(settings) {
         onDeleteLocalCollection,
         onBulkActivate: (itemKeys) => handleBulkToggle(itemKeys, true),
         onBulkDeactivate: (itemKeys) => handleBulkToggle(itemKeys, false),
+        onRebuildLorebook: (bookType) => rebuildLorebook(settings, bookType),
+        getLorebookEntryCount: (bookType) => getLorebookEntryCount(bookType),
     });
 }
 

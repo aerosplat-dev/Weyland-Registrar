@@ -561,6 +561,27 @@
     border-top: 1px solid rgba(180, 38, 58, 0.15);
 }
 
+.wreg-stats-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-top: 8px;
+    margin-top: 4px;
+    border-top: 1px solid rgba(180, 38, 58, 0.15);
+}
+
+.wreg-stats-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--wreg-text-muted);
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .wreg-bulk-count {
     font-size: 11px;
     color: var(--wreg-text-muted);
