@@ -172,3 +172,34 @@ test('syncCharacterBook does not re-back-up a book it already owns', async () =>
     const backupName = await syncCharacterBook(stContext, fakeCallFunction(), settings, {}); // second sync: already ours
     assert.equal(backupName, null);
 });
+
+// Regression test for a real production bug: the roster/location-list entries
+// are `constant: true` (always active), so their own content -- a full
+// listing of every active character/location's name -- must never re-enter
+// ST's recursive WI scan buffer. Without preventRecursion, and with this
+// deployment's world_info_recursive setting enabled, that listing cascades
+// into activating every other entry (whose own key is just its name) on
+// every single message, regardless of what's actually said. Confirmed live:
+// a single-name test message activated 47 entries with this unset, 21 (all
+// legitimate) with it set.
+test('syncCharacterBook marks the roster entry preventRecursion, so its full name listing cannot cascade-activate every character via recursive WI scanning', async () => {
+    const stContext = fakeStContext();
+    const settings = { itemStates: {}, collections: {} };
+    await syncCharacterBook(stContext, fakeCallFunction(), settings, {});
+    assert.equal(stContext.books[CHARACTER_BOOK_NAME].entries[ROSTER_UID].preventRecursion, true);
+});
+
+test('syncLocationBook marks the location-list entry preventRecursion, for the same reason as the character roster', async () => {
+    const stContext = fakeStContext();
+    const callFunction = async (name, args) => {
+        if (name === 'parseLocationSubLocations') return [];
+        if (name === 'addWorldEntries') {
+            const [book, id, record] = args;
+            return { ...book, entries: { ...book.entries, [id]: { uid: id, comment: record.name, content: 'LOC' } } };
+        }
+        throw new Error(`Unexpected call: ${name}`);
+    };
+    const settings = { itemStates: {}, collections: {} };
+    await syncLocationBook(stContext, callFunction, settings, {});
+    assert.equal(stContext.books[LOCATION_BOOK_NAME].entries[LOCATION_LIST_UID].preventRecursion, true);
+});
