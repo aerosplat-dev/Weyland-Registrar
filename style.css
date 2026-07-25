@@ -582,6 +582,25 @@
     text-overflow: ellipsis;
 }
 
+/* "Apply Changes" state of #wreg-rebuild-lorebook (toggled on when
+ * currentState.isDirty(bookType) is true) -- a subtle pulsing glow, not a
+ * color change alone, so the pending-changes signal reads at a glance
+ * without needing to actually parse the button's text. */
+.wreg-btn-glow {
+    border-color: var(--wreg-text-accent-bright);
+    color: var(--wreg-text-accent-bright);
+    animation: wreg-btn-glow-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes wreg-btn-glow-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(255, 107, 128, 0);
+    }
+    50% {
+        box-shadow: 0 0 8px 1px rgba(255, 107, 128, 0.55);
+    }
+}
+
 .wreg-bulk-count {
     font-size: 11px;
     color: var(--wreg-text-muted);
@@ -758,5 +777,12 @@
     .wreg-spinner {
         animation: none;
         border-top-color: rgba(180, 38, 58, 0.2);
+    }
+
+    /* Same signal (border/text color + a glow), no pulsing -- the "Apply
+     * Changes" label text itself still communicates the pending state. */
+    .wreg-btn-glow {
+        animation: none;
+        box-shadow: 0 0 6px 1px rgba(255, 107, 128, 0.5);
     }
 }

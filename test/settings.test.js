@@ -33,3 +33,11 @@ test('strips a legacy forced-inactive itemStates entry from a prior version of t
     assert.equal(settings.itemStates['char:1'], undefined);
     assert.equal(settings.itemStates['char:2'], 'active');
 });
+
+test('pendingChanges defaults both books to false and is independent per extensionSettings instance', () => {
+    const a = getSettings({});
+    const b = getSettings({});
+    assert.deepEqual(a.pendingChanges, { character: false, location: false });
+    a.pendingChanges.character = true;
+    assert.equal(b.pendingChanges.character, false);
+});

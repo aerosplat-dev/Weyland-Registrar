@@ -125,6 +125,17 @@ function notifyIfBackedUp(backupName) {
     }
 }
 
+/**
+ * Writes BOTH books fully from the current settings, clearing pending-change
+ * state for both -- used only by refreshCatalogAndSync (Refresh Catalog/
+ * Retry), which always applies immediately regardless of the staged-changes
+ * model below: it already regenerates from current settings, so deferring it
+ * further would add no benefit, only a second, redundant "did this apply?"
+ * question. Toggles/bulk actions/local-collection edits do NOT call this --
+ * see handleToggle's own doc for why immediate syncing was removed.
+ * @param {object} settings
+ * @returns {Promise<void>}
+ */
 async function syncBooks(settings) {
     const { catalog, settingsForSync, sandbox, stContext } = await prepareSync(settings);
     const charactersByKey = Object.fromEntries(catalog.characters.map(r => [r.itemKey, r]));
@@ -135,34 +146,44 @@ async function syncBooks(settings) {
         syncLocationBook(stContext, sandbox.callFunction, settingsForSync, locationsByKey),
     ]);
 
+    settings.pendingChanges.character = false;
+    settings.pendingChanges.location = false;
+    getStContext().saveSettingsDebounced();
+
     notifyIfBackedUp(characterBookBackup);
     notifyIfBackedUp(locationBookBackup);
 }
 
 /**
- * The "Rebuild Lorebook" button's action: fully regenerates ONE book --
- * never both, unlike syncBooks -- from the currently cached catalog (no
- * network refetch). Since syncCharacterBook/syncLocationBook already never
- * partially patch a book (every sync fully regenerates `entries` from the
- * live active set, see worldInfoWriter.js's own doc), this is exactly the
- * same rebuild that already happens silently after every activate/
- * deactivate -- the only difference is it's user-triggered on demand, on
- * just one tab's book, and always confirms completion with a toast (unlike
- * syncBooks, which stays silent on success so routine toggles don't spam
- * notifications).
+ * The "Rebuild Lorebook"/"Apply Changes" button's action: fully regenerates
+ * ONE book -- never both, unlike syncBooks -- from the currently cached
+ * catalog (no network refetch), and clears that book's pending-changes flag.
+ * Since syncCharacterBook/syncLocationBook never partially patch a book
+ * (every sync fully regenerates `entries` from the live active set, see
+ * worldInfoWriter.js's own doc), this single function correctly serves both
+ * framings the button can show: with no pending changes, it's a from-scratch
+ * "Rebuild Lorebook" (a parity-check tool, output identical to what's
+ * already there); with pending changes, it's "Apply Changes" (the first
+ * point since those toggles where the real book actually reflects them) --
+ * the toast wording below is the only thing that varies between the two.
  * @param {object} settings
  * @param {'character'|'location'} bookType
  * @returns {Promise<void>}
  */
 async function rebuildLorebook(settings, bookType) {
+    const wasApplyingPendingChanges = !!settings.pendingChanges[bookType];
     const { catalog, settingsForSync, sandbox, stContext } = await prepareSync(settings);
     const backupName = bookType === 'character'
         ? await syncCharacterBook(stContext, sandbox.callFunction, settingsForSync, Object.fromEntries(catalog.characters.map(r => [r.itemKey, r])))
         : await syncLocationBook(stContext, sandbox.callFunction, settingsForSync, Object.fromEntries(catalog.locations.map(r => [r.itemKey, r])));
 
+    settings.pendingChanges[bookType] = false;
+    getStContext().saveSettingsDebounced();
+
     notifyIfBackedUp(backupName);
     if (!backupName) {
-        toastr.success(`${bookType === 'character' ? 'Character' : 'Location'} lorebook rebuilt.`, 'Weyland Registrar');
+        const noun = bookType === 'character' ? 'Character' : 'Location';
+        toastr.success(wasApplyingPendingChanges ? `${noun} changes applied.` : `${noun} lorebook rebuilt.`, 'Weyland Registrar');
     }
 }
 
@@ -265,6 +286,20 @@ function classifyItemKey(itemKey) {
     return 'collection';
 }
 
+/**
+ * Which book an individual character/location itemKey's own activation
+ * state affects. Only meaningful for `classifyItemKey(itemKey) === 'item'`
+ * keys -- a collection-kind key can span both books at once (a Registrar or
+ * local collection isn't restricted to one item type), so mutation sites
+ * touching a collection mark both books dirty directly instead of calling
+ * this.
+ * @param {string|number} itemKey
+ * @returns {'character'|'location'}
+ */
+function bookTypeForItemKey(itemKey) {
+    return String(itemKey).startsWith('char:') ? 'character' : 'location';
+}
+
 async function initModal(settings) {
     // Never assume the catalog is already populated by the time the modal
     // opens -- boot's own background population (see ensureCatalogFresh)
@@ -331,19 +366,47 @@ async function initModal(settings) {
     }
 
     /**
+     * Marks a book as having activation-state changes that aren't reflected
+     * in its real World Info entries yet -- set at exactly the same
+     * mutation sites as `invalidateResolvedCollections()` above, since both
+     * exist for the same reason (a settings write that changes what's
+     * active). Cleared by `syncBooks`/`rebuildLorebook` once that book is
+     * actually written. Persisted (not just in-memory) so the "Apply
+     * Changes" indicator survives a reload.
+     * @param {'character'|'location'} bookType
+     */
+    function markDirty(bookType) {
+        settings.pendingChanges[bookType] = true;
+    }
+
+    /**
      * Handles both onActivate and onDeactivate for every tab: branches by
      * classifyItemKey so a collection-type itemKey writes
-     * settings.collections[id].active (spec S9) instead of itemStates. Does
-     * NOT re-render the modal itself (Task 8 fix #1) -- lib/ui/modal.js's
+     * settings.collections[id].active (spec S9) instead of itemStates.
+     *
+     * Deliberately does NOT sync the real World Info book -- activation
+     * state only marks the affected book(s) dirty (staged-changes model);
+     * writing the book is deferred until the user clicks "Apply Changes"
+     * (rebuildLorebook, wired to the same button as the always-available
+     * "Rebuild Lorebook" action) or Refresh Catalog. This also closes a real
+     * bug the prior sync-on-every-toggle version had: syncing immediately
+     * but not awaiting it before the stats bar re-read the real book's entry
+     * count raced the (slow, sequential per-character) sync, showing a
+     * stale entry count paired with the already-updated active count --
+     * confirmed live (toggling one more character showed "81 active
+     * characters · 396 lorebook entries" for a full second before the real
+     * write landed at 400). Staging removes the race entirely: nothing
+     * re-reads the real book until an explicit Apply, at which point this
+     * function's mutation has long since settled.
+     *
+     * Does NOT re-render the modal itself (Task 8 fix #1) -- lib/ui/modal.js's
      * renderCurrentTab/openDetail wrappers already re-render immediately
-     * after calling onActivate/onDeactivate (fire-and-forget, no await -- see
-     * modal.js's own JSDoc on openModal). Both branches below mutate
-     * synchronously before this function's first `await`, so that immediate
-     * re-render already sees the new state.
+     * after calling onActivate/onDeactivate. Both branches below mutate
+     * synchronously, so that immediate re-render already sees the new state.
      * @param {string|number} itemKey
      * @param {boolean} makeActive
      */
-    async function handleToggle(itemKey, makeActive) {
+    function handleToggle(itemKey, makeActive) {
         const kind = classifyItemKey(itemKey);
 
         if (kind === 'collection') {
@@ -353,18 +416,22 @@ async function initModal(settings) {
                 active: makeActive,
                 source: existing?.source ?? (settings.localCollections[key] ? 'local' : 'registrar'),
             };
+            // A collection isn't restricted to one item type -- mark both
+            // books dirty rather than inspecting its member composition.
+            markDirty('character');
+            markDirty('location');
         } else if (makeActive) {
             settings.itemStates[itemKey] = 'active';
+            markDirty(bookTypeForItemKey(itemKey));
         } else {
             // No forced-inactive pin exists anymore (see activationState.js)
             // -- deactivating just clears any forced-active pin. If a
             // collection still covers this item, it stays active; the only
             // way to turn it off is to deactivate that collection.
             delete settings.itemStates[itemKey];
+            markDirty(bookTypeForItemKey(itemKey));
         }
         invalidateResolvedCollections();
-        await syncBooks(settings);
-
         getStContext().saveSettingsDebounced();
         // No re-render call here: lib/ui/modal.js's own renderCurrentTab/
         // openDetail wrappers already re-render immediately after this
@@ -378,16 +445,13 @@ async function initModal(settings) {
 
     /**
      * Batched version of handleToggle for the bulk-selection action bar.
-     * Mutates every selected item/collection's state synchronously first,
-     * then calls syncBooks exactly once -- looping handleToggle here instead
-     * would call syncBooks once per selected item, needlessly rebuilding the
-     * shared roster/location-list entries (and the single consolidated
-     * Character Roster entry Weyland-WeyPhone depends on) N times instead of
-     * once.
+     * Same staged-changes behavior as handleToggle -- mutates every selected
+     * item/collection's state and marks the affected book(s) dirty, without
+     * syncing.
      * @param {Array<string>} itemKeys
      * @param {boolean} makeActive
      */
-    async function handleBulkToggle(itemKeys, makeActive) {
+    function handleBulkToggle(itemKeys, makeActive) {
         for (const itemKey of itemKeys) {
             const kind = classifyItemKey(itemKey);
             if (kind === 'collection') {
@@ -397,16 +461,19 @@ async function initModal(settings) {
                     active: makeActive,
                     source: existing?.source ?? (settings.localCollections[key] ? 'local' : 'registrar'),
                 };
+                markDirty('character');
+                markDirty('location');
             } else if (makeActive) {
                 settings.itemStates[itemKey] = 'active';
+                markDirty(bookTypeForItemKey(itemKey));
             } else {
                 delete settings.itemStates[itemKey];
+                markDirty(bookTypeForItemKey(itemKey));
             }
         }
 
         if (itemKeys.length) {
             invalidateResolvedCollections();
-            await syncBooks(settings);
         }
         getStContext().saveSettingsDebounced();
     }
@@ -502,16 +569,28 @@ async function initModal(settings) {
     }
 
     function onUpdateLocalCollectionMembers(itemKey, memberKeys) {
+        // Membership only affects a book if this collection is currently
+        // active -- editing an inactive local set's members has no live
+        // effect, so it doesn't need to (and shouldn't) light up the Apply
+        // Changes button.
+        const isActive = !!settings.collections[itemKey]?.active;
         updateLocalCollectionMembers(settings, itemKey, memberKeys);
         invalidateResolvedCollections();
+        if (isActive) {
+            markDirty('character');
+            markDirty('location');
+        }
         getStContext().saveSettingsDebounced();
     }
 
-    async function onDeleteLocalCollection(itemKey) {
+    function onDeleteLocalCollection(itemKey) {
         const wasActive = !!settings.collections[itemKey]?.active;
         deleteLocalCollection(settings, itemKey);
         invalidateResolvedCollections();
-        if (wasActive) await syncBooks(settings);
+        if (wasActive) {
+            markDirty('character');
+            markDirty('location');
+        }
         getStContext().saveSettingsDebounced();
     }
 
@@ -562,6 +641,7 @@ async function initModal(settings) {
         onBulkDeactivate: (itemKeys) => handleBulkToggle(itemKeys, false),
         onRebuildLorebook: (bookType) => rebuildLorebook(settings, bookType),
         getLorebookEntryCount: (bookType) => getLorebookEntryCount(bookType),
+        isDirty: (bookType) => !!settings.pendingChanges[bookType],
     });
 }
 
