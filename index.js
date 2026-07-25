@@ -302,12 +302,33 @@ async function initModal(settings) {
     }
 
     const catalog = await readCatalog();
-    // NOTE: no outer `resolvedCollections` snapshot here (fix #2, Task 8) --
-    // resolveActive/getItemDetail below each compute buildResolvedCollections
-    // fresh on every call instead, since modal.js calls them repeatedly
-    // without re-invoking initModal. `catalog` itself stays a single
-    // per-initModal-call snapshot; only the collections resolution derived
-    // from it needed to stop being snapshotted.
+
+    // Memoized per initModal call, invalidated on every settings mutation
+    // below. Task 8 deliberately avoided a single fixed snapshot here
+    // because a collection's own toggle needs to show up on the very next
+    // call without re-invoking initModal -- but always recomputing fresh
+    // went too far the other way: buildResolvedCollections does a full
+    // O(active collections x catalog size) filter-scan, and it was being
+    // called twice per rendered row (resolveActive + resolveActiveCollections
+    // in itemList.js's render loop) plus once more per item in
+    // updateStatsBar's active-count filter -- ~900+ fresh recomputations for
+    // the Characters tab's 454 rows, measured at ~6.4s of main-thread
+    // blocking on every tab switch (profile-tab-switch.mjs/
+    // profile-breakdown.mjs). The expensive part -- resolveCollectionMembers'
+    // filter scan -- only depends on each collection's filter string and the
+    // catalog, both fixed for this initModal call's lifetime; only the
+    // `.active` flag and local-collection membership/name actually change on
+    // a mutation. So invalidate-then-lazily-recompute keeps Task 8's
+    // freshness guarantee (a single recompute costs ~5.6ms on the real
+    // catalog) while eliminating the O(rows) blowup.
+    let resolvedCollectionsCache = null;
+    function getResolvedCollections() {
+        if (!resolvedCollectionsCache) resolvedCollectionsCache = buildResolvedCollections(settings, catalog);
+        return resolvedCollectionsCache;
+    }
+    function invalidateResolvedCollections() {
+        resolvedCollectionsCache = null;
+    }
 
     /**
      * Handles both onActivate and onDeactivate for every tab: branches by
@@ -341,6 +362,7 @@ async function initModal(settings) {
             // way to turn it off is to deactivate that collection.
             delete settings.itemStates[itemKey];
         }
+        invalidateResolvedCollections();
         await syncBooks(settings);
 
         getStContext().saveSettingsDebounced();
@@ -382,21 +404,23 @@ async function initModal(settings) {
             }
         }
 
-        if (itemKeys.length) await syncBooks(settings);
+        if (itemKeys.length) {
+            invalidateResolvedCollections();
+            await syncBooks(settings);
+        }
         getStContext().saveSettingsDebounced();
     }
 
     /**
-     * Resolves the full detail-pane payload for a single itemKey. Computes
-     * its own fresh `resolvedCollections` snapshot on every call (same fix
-     * as `resolveActive` below) so a collection's own toggle is reflected
-     * immediately even though modal.js calls this repeatedly without
-     * re-invoking initModal.
+     * Resolves the full detail-pane payload for a single itemKey. Reads the
+     * memoized `getResolvedCollections()` (same cache as `resolveActive`
+     * below), which stays fresh across a collection's own toggle because
+     * every mutation site calls `invalidateResolvedCollections()`.
      * @param {string} itemKey
      * @returns {import('./lib/ui/detailPane.js').ItemDetail & {memberKeys?: string[]}}
      */
     function getItemDetail(itemKey) {
-        const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call -- see Step 4's note
+        const resolvedCollections = getResolvedCollections();
         const routingKind = classifyItemKey(itemKey);
 
         if (routingKind === 'collection') {
@@ -467,22 +491,26 @@ async function initModal(settings) {
     function onCreateLocalCollection(name, memberKeys) {
         const id = createLocalCollection(settings, name, memberKeys);
         settings.collections[id] = { active: false, source: 'local' };
+        invalidateResolvedCollections();
         getStContext().saveSettingsDebounced();
     }
 
     function onRenameLocalCollection(itemKey, name) {
         renameLocalCollection(settings, itemKey, name);
+        invalidateResolvedCollections();
         getStContext().saveSettingsDebounced();
     }
 
     function onUpdateLocalCollectionMembers(itemKey, memberKeys) {
         updateLocalCollectionMembers(settings, itemKey, memberKeys);
+        invalidateResolvedCollections();
         getStContext().saveSettingsDebounced();
     }
 
     async function onDeleteLocalCollection(itemKey) {
         const wasActive = !!settings.collections[itemKey]?.active;
         deleteLocalCollection(settings, itemKey);
+        invalidateResolvedCollections();
         if (wasActive) await syncBooks(settings);
         getStContext().saveSettingsDebounced();
     }
@@ -504,7 +532,7 @@ async function initModal(settings) {
             return [];
         },
         resolveActive: (itemKey) => {
-            const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call, not the outer initModal-scoped snapshot
+            const resolvedCollections = getResolvedCollections();
             const kind = classifyItemKey(itemKey);
             if (kind === 'collection') return !!resolvedCollections[String(itemKey)]?.active;
             return resolveItemActive(itemKey, settings.itemStates, resolvedCollections);
@@ -519,8 +547,7 @@ async function initModal(settings) {
             // Same item-only gating as resolveForced above -- a collection
             // can't itself be "a member of" another collection.
             if (classifyItemKey(itemKey) !== 'item') return [];
-            const resolvedCollections = buildResolvedCollections(settings, catalog); // fresh every call, same reason as resolveActive above
-            return resolveActiveCollectionNames(itemKey, resolvedCollections);
+            return resolveActiveCollectionNames(itemKey, getResolvedCollections());
         },
         onActivate: (itemKey) => handleToggle(itemKey, true),
         onDeactivate: (itemKey) => handleToggle(itemKey, false),
