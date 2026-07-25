@@ -529,6 +529,13 @@
 
 .wreg-sort-select {
     padding: 5px 6px;
+    /* Confirmed live: SillyTavern's own global stylesheet applies a
+     * default margin-bottom (but no margin-top) to bare <select> elements,
+     * which we never override elsewhere in this file. align-items:center
+     * on .wreg-list-controls centers the MARGIN box, so that asymmetric
+     * margin alone was enough to visibly shift #wreg-sort ~2.5px above
+     * #wreg-search despite both having identical height/padding/border. */
+    margin: 0;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 5px;
@@ -561,28 +568,7 @@
     border-top: 1px solid rgba(180, 38, 58, 0.15);
 }
 
-.wreg-stats-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding-top: 8px;
-    margin-top: 4px;
-    border-top: 1px solid rgba(180, 38, 58, 0.15);
-}
-
-.wreg-stats-text {
-    flex: 1;
-    min-width: 0;
-    font-size: 11px;
-    color: var(--wreg-text-muted);
-    letter-spacing: 0.2px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-/* "Apply Changes" state of #wreg-rebuild-lorebook (toggled on when
+/* "Apply" state of #wreg-rebuild-lorebook (toggled on when
  * currentState.isDirty(bookType) is true) -- a subtle pulsing glow, not a
  * color change alone, so the pending-changes signal reads at a glance
  * without needing to actually parse the button's text. */

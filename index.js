@@ -6,8 +6,7 @@ import { openModal, showModalLoading, showModalError } from './lib/ui/modal.js';
 import { createCatalogCache, createIndexedDbStorageEngine } from './lib/catalogCache.js';
 import { fetchCharacterList, fetchLocationList, fetchCollectionList, toItemKey, buildSearchBlob } from './lib/registrarApi.js';
 import { createEntrySandbox } from './lib/entrySandbox.js';
-import { syncCharacterBook, syncLocationBook, CHARACTER_BOOK_NAME, LOCATION_BOOK_NAME } from './lib/worldInfoWriter.js';
-import { MARKER_UID } from './lib/uidScheme.js';
+import { syncCharacterBook, syncLocationBook } from './lib/worldInfoWriter.js';
 import { resolveItemActive, resolveActiveCollectionNames } from './lib/activationState.js';
 import { resolveCollectionMembers } from './lib/collectionResolver.js';
 import { createLocalCollection, renameLocalCollection, updateLocalCollectionMembers, deleteLocalCollection } from './lib/localCollections.js';
@@ -185,20 +184,6 @@ async function rebuildLorebook(settings, bookType) {
         const noun = bookType === 'character' ? 'Character' : 'Location';
         toastr.success(wasApplyingPendingChanges ? `${noun} changes applied.` : `${noun} lorebook rebuilt.`, 'Weyland Registrar');
     }
-}
-
-/**
- * Live entry count in the real WI book for parity-checking against what
- * the browsing list shows as active -- deliberately excludes the internal
- * ownership marker (uid MARKER_UID, bookOwnership.js), which is never
- * user-facing content.
- * @param {'character'|'location'} bookType
- * @returns {Promise<number>}
- */
-async function getLorebookEntryCount(bookType) {
-    const bookName = bookType === 'character' ? CHARACTER_BOOK_NAME : LOCATION_BOOK_NAME;
-    const book = await getStContext().loadWorldInfo(bookName);
-    return Object.keys(book?.entries ?? {}).filter(uid => Number(uid) !== MARKER_UID).length;
 }
 
 /**
@@ -640,7 +625,6 @@ async function initModal(settings) {
         onBulkActivate: (itemKeys) => handleBulkToggle(itemKeys, true),
         onBulkDeactivate: (itemKeys) => handleBulkToggle(itemKeys, false),
         onRebuildLorebook: (bookType) => rebuildLorebook(settings, bookType),
-        getLorebookEntryCount: (bookType) => getLorebookEntryCount(bookType),
         isDirty: (bookType) => !!settings.pendingChanges[bookType],
     });
 }
