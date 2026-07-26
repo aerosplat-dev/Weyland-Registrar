@@ -4,9 +4,10 @@ import {
     toItemKey,
     buildSearchBlob,
     fetchCharacterList,
-    fetchViaProxy,
+    fetchViaThirdPartyProxies,
     fetchWithCorsFallback,
     fetchLocationList,
+    fetchCollectionList,
 } from '../lib/registrarApi.js';
 
 test('toItemKey for a character', () => {
@@ -87,7 +88,7 @@ test('buildSearchBlob never throws on malformed outfitEntries/subLocations JSON'
     assert.doesNotThrow(() => buildSearchBlob({ subLocations: 'not-json' }, 'location'));
 });
 
-test('fetchCharacterList calls /data/list directly with no proxy', async () => {
+test('fetchCharacterList calls /data/list directly when it succeeds', async () => {
     let calledUrl = null;
     const fakeFetch = async (url) => {
         calledUrl = url;
@@ -98,23 +99,63 @@ test('fetchCharacterList calls /data/list directly with no proxy', async () => {
     assert.deepEqual(result, [{ characterId: '1' }]);
 });
 
-test('fetchCharacterList throws on non-ok response', async () => {
+test('fetchCharacterList throws on non-ok response, without touching the proxy chain', async () => {
+    let proxyCalled = false;
     const fakeFetch = async () => ({ ok: false, status: 500 });
-    await assert.rejects(() => fetchCharacterList('https://x', fakeFetch), /500/);
+    const proxyFetchImpl = async () => { proxyCalled = true; return { ok: true, json: async () => [] }; };
+    await assert.rejects(() => fetchCharacterList('https://x', fakeFetch, proxyFetchImpl), /500/);
+    assert.equal(proxyCalled, false);
 });
 
-test('fetchViaProxy routes through /proxy/<raw target url>, not encoded', async () => {
-    let calledUrl = null;
-    let calledOpts = null;
-    const fakeFetch = async (url, opts) => {
-        calledUrl = url;
-        calledOpts = opts;
+test('fetchCharacterList falls back to the third-party proxy chain when direct fetch is CORS-blocked', async () => {
+    const fetchImpl = async () => { throw new TypeError('Failed to fetch'); };
+    let proxyUrl = null;
+    const proxyFetchImpl = async (url) => { proxyUrl = url; return { ok: true, json: async () => [{ characterId: '9' }] }; };
+    const result = await fetchCharacterList('https://registrar.weybooru.com', fetchImpl, proxyFetchImpl);
+    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Fdata%2Flist');
+    assert.deepEqual(result, [{ characterId: '9' }]);
+});
+
+test('fetchViaThirdPartyProxies returns the first successful proxy result and never tries the rest', async () => {
+    const attempted = [];
+    const fetchImpl = async (url) => {
+        attempted.push(url);
         return { ok: true, json: async () => [{ locationId: '1' }] };
     };
-    const result = await fetchViaProxy('https://registrar.weybooru.com/loci/list', fakeFetch);
-    assert.equal(calledUrl, '/proxy/https://registrar.weybooru.com/loci/list');
-    assert.deepEqual(calledOpts, { credentials: 'include' });
+    const result = await fetchViaThirdPartyProxies('https://registrar.weybooru.com/loci/list', 'Failed to fetch', fetchImpl);
+    assert.equal(attempted.length, 1);
+    assert.equal(attempted[0], 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Floci%2Flist');
     assert.deepEqual(result, [{ locationId: '1' }]);
+});
+
+test('fetchViaThirdPartyProxies falls through to the next proxy when an earlier one fails', async () => {
+    const attempted = [];
+    const fetchImpl = async (url) => {
+        attempted.push(url);
+        if (url.includes('codetabs')) throw new Error('codetabs down');
+        if (url.includes('allorigins')) return { ok: false, status: 429 };
+        return { ok: true, json: async () => [{ locationId: '2' }] }; // corsproxy.io
+    };
+    const result = await fetchViaThirdPartyProxies('https://registrar.weybooru.com/loci/list', 'Failed to fetch', fetchImpl);
+    assert.equal(attempted.length, 3);
+    assert.ok(attempted[0].includes('codetabs'));
+    assert.ok(attempted[1].includes('allorigins'));
+    assert.ok(attempted[2].includes('corsproxy.io'));
+    assert.deepEqual(result, [{ locationId: '2' }]);
+});
+
+test('fetchViaThirdPartyProxies throws one combined error (direct + every proxy) when all sources fail', async () => {
+    const fetchImpl = async () => { throw new Error('down'); };
+    await assert.rejects(
+        () => fetchViaThirdPartyProxies('https://registrar.weybooru.com/loci/list', 'Failed to fetch', fetchImpl),
+        (error) => {
+            assert.match(error.message, /direct: Failed to fetch/);
+            assert.match(error.message, /api\.codetabs\.com.*down/);
+            assert.match(error.message, /api\.allorigins\.win.*down/);
+            assert.match(error.message, /corsproxy\.io.*down/);
+            return true;
+        },
+    );
 });
 
 test('fetchWithCorsFallback uses the direct result when direct fetch succeeds', async () => {
@@ -126,7 +167,7 @@ test('fetchWithCorsFallback uses the direct result when direct fetch succeeds', 
     assert.equal(proxyCalled, false);
 });
 
-test('fetchWithCorsFallback falls back to the proxy when direct fetch throws (CORS block)', async () => {
+test('fetchWithCorsFallback falls back to the third-party proxy chain when direct fetch throws (CORS block)', async () => {
     const fetchImpl = async () => { throw new TypeError('Failed to fetch'); };
     let proxyUrl = null;
     const proxyFetchImpl = async (url) => {
@@ -134,7 +175,7 @@ test('fetchWithCorsFallback falls back to the proxy when direct fetch throws (CO
         return { ok: true, json: async () => [{ locationId: '1' }] };
     };
     const result = await fetchWithCorsFallback('https://registrar.weybooru.com/loci/list', { fetchImpl, proxyFetchImpl });
-    assert.equal(proxyUrl, '/proxy/https://registrar.weybooru.com/loci/list');
+    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Floci%2Flist');
     assert.deepEqual(result, [{ locationId: '1' }]);
 });
 
@@ -159,11 +200,20 @@ test('fetchLocationList delegates to fetchWithCorsFallback with the right target
     assert.equal(calledUrl, 'https://registrar.weybooru.com/loci/list');
 });
 
-test('fetchLocationList falls back to proxy when direct fetch is CORS-blocked', async () => {
+test('fetchLocationList falls back to the third-party proxy chain when direct fetch is CORS-blocked', async () => {
     const fetchImpl = async () => { throw new TypeError('Failed to fetch'); };
     let proxyUrl = null;
     const proxyFetchImpl = async (url) => { proxyUrl = url; return { ok: true, json: async () => [{ locationId: '9' }] }; };
     const result = await fetchLocationList('https://registrar.weybooru.com', fetchImpl, proxyFetchImpl);
-    assert.equal(proxyUrl, '/proxy/https://registrar.weybooru.com/loci/list');
+    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Floci%2Flist');
     assert.deepEqual(result, [{ locationId: '9' }]);
+});
+
+test('fetchCollectionList falls back to the third-party proxy chain when direct fetch is CORS-blocked', async () => {
+    const fetchImpl = async () => { throw new TypeError('Failed to fetch'); };
+    let proxyUrl = null;
+    const proxyFetchImpl = async (url) => { proxyUrl = url; return { ok: true, json: async () => [{ collectionId: '3' }] }; };
+    const result = await fetchCollectionList('https://registrar.weybooru.com', fetchImpl, proxyFetchImpl);
+    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Fcoll%2Flist');
+    assert.deepEqual(result, [{ collectionId: '3' }]);
 });
