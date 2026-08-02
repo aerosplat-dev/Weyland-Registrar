@@ -62,23 +62,70 @@ function buildResolvedCollections(settings, catalog) {
     return result;
 }
 
+/**
+ * Fetches the three catalog kinds independently (Promise.allSettled, not
+ * Promise.all) so that one endpoint failing doesn't discard the others --
+ * confirmed live that /loci/list and /coll/list have no CORS header (unlike
+ * /data/list) and so always depend on the third-party proxy fallback chain
+ * in registrarApi.js, which can fail entirely (e.g. a proxy outage, or
+ * corsproxy.io's now-paid-only server-side-request policy) independently of
+ * whether /data/list's direct, no-proxy-needed fetch succeeds. Under the
+ * old single-Promise.all version, a locations/collections failure discarded
+ * an already-successful characters fetch too -- a newly added character
+ * could fetch correctly and still never reach the cache because an
+ * unrelated endpoint failed in the same round trip.
+ * @param {object} settings
+ * @returns {Promise<{characters: object[]|null, locations: object[]|null, collections: object[]|null, failures: string[]}>}
+ */
 async function refreshCatalog(settings) {
-    const [characters, locations, collections] = await Promise.all([
+    const [charactersResult, locationsResult, collectionsResult] = await Promise.allSettled([
         fetchCharacterList(settings.apiBaseUrl),
         fetchLocationList(settings.apiBaseUrl),
         fetchCollectionList(settings.apiBaseUrl),
     ]);
-    const taggedCharacters = characters.map(r => ({ ...r, itemKey: toItemKey(r, 'character'), searchBlob: buildSearchBlob(r, 'character') }));
-    const taggedLocations = locations.map(r => ({ ...r, itemKey: toItemKey(r, 'location'), searchBlob: buildSearchBlob(r, 'location') }));
 
-    await Promise.all([
-        catalogCache.setCharacters(taggedCharacters),
-        catalogCache.setLocations(taggedLocations),
-        catalogCache.setCollections(collections),
-        catalogCache.setLastRefreshed(Date.now()),
-    ]);
+    const failures = [];
+    const writes = [];
 
-    return { characters: taggedCharacters, locations: taggedLocations, collections };
+    let taggedCharacters = null;
+    if (charactersResult.status === 'fulfilled') {
+        taggedCharacters = charactersResult.value.map(r => ({ ...r, itemKey: toItemKey(r, 'character'), searchBlob: buildSearchBlob(r, 'character') }));
+        writes.push(catalogCache.setCharacters(taggedCharacters));
+    } else {
+        failures.push(`characters: ${charactersResult.reason?.message ?? charactersResult.reason}`);
+    }
+
+    let taggedLocations = null;
+    if (locationsResult.status === 'fulfilled') {
+        taggedLocations = locationsResult.value.map(r => ({ ...r, itemKey: toItemKey(r, 'location'), searchBlob: buildSearchBlob(r, 'location') }));
+        writes.push(catalogCache.setLocations(taggedLocations));
+    } else {
+        failures.push(`locations: ${locationsResult.reason?.message ?? locationsResult.reason}`);
+    }
+
+    let collections = null;
+    if (collectionsResult.status === 'fulfilled') {
+        collections = collectionsResult.value;
+        writes.push(catalogCache.setCollections(collections));
+    } else {
+        failures.push(`collections: ${collectionsResult.reason?.message ?? collectionsResult.reason}`);
+    }
+
+    if (failures.length === 3) {
+        throw new Error(`Failed to refresh the Registrar catalog -- ${failures.join(' | ')}`);
+    }
+
+    // Only stamp lastRefreshed (isCatalogStale's cadence check) when every
+    // list actually refreshed -- a partial failure means at least one list
+    // is still the old cached data, so the next boot-time staleness check
+    // should keep retrying rather than treating this attempt as fully fresh.
+    if (failures.length === 0) {
+        writes.push(catalogCache.setLastRefreshed(Date.now()));
+    }
+
+    await Promise.all(writes);
+
+    return { characters: taggedCharacters, locations: taggedLocations, collections, failures };
 }
 
 /**
@@ -209,8 +256,9 @@ async function refreshCatalogAndSync(settings) {
     // indication a refresh was even happening.
     await showModalLoading();
     let catalogFetchFailed = false;
+    let partialFailures = [];
     try {
-        await refreshCatalog(settings);
+        ({ failures: partialFailures } = await refreshCatalog(settings));
     } catch (error) {
         console.error('[Weyland-Registrar] Catalog refresh failed:', error);
         catalogFetchFailed = true;
@@ -231,9 +279,18 @@ async function refreshCatalogAndSync(settings) {
         // enough here, no need for a hard error takeover.
         toastr.error('Failed to refresh the Registrar catalog. Showing previously cached data.', 'Weyland Registrar');
     } else {
-        // Catalog fetch succeeded -- syncBooks (rebuilding the WI books) is
-        // a separate concern from what the browsing list shows, so its own
-        // failure doesn't block reopening the list.
+        if (partialFailures.length) {
+            // One or two of the three lists failed (e.g. the CORS-proxy
+            // fallback chain being down for /loci/list or /coll/list) but at
+            // least one succeeded and was still written to the cache above
+            // -- worth a toast so a partially-stale list isn't mistaken for
+            // a fully successful refresh, but not worth a hard error state.
+            toastr.warning(`Some Registrar data couldn't be refreshed, showing cached data for it: ${partialFailures.join('; ')}`, 'Weyland Registrar');
+        }
+        // Catalog fetch succeeded (at least partially) -- syncBooks
+        // (rebuilding the WI books) is a separate concern from what the
+        // browsing list shows, so its own failure doesn't block reopening
+        // the list.
         try {
             await syncBooks(settings);
         } catch (error) {
