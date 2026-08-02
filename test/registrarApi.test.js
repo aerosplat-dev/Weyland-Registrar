@@ -112,7 +112,7 @@ test('fetchCharacterList falls back to the third-party proxy chain when direct f
     let proxyUrl = null;
     const proxyFetchImpl = async (url) => { proxyUrl = url; return { ok: true, json: async () => [{ characterId: '9' }] }; };
     const result = await fetchCharacterList('https://registrar.weybooru.com', fetchImpl, proxyFetchImpl);
-    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Fdata%2Flist');
+    assert.equal(proxyUrl, 'https://proxy.corsfix.com/?https://registrar.weybooru.com/data/list');
     assert.deepEqual(result, [{ characterId: '9' }]);
 });
 
@@ -124,7 +124,7 @@ test('fetchViaThirdPartyProxies returns the first successful proxy result and ne
     };
     const result = await fetchViaThirdPartyProxies('https://registrar.weybooru.com/loci/list', 'Failed to fetch', fetchImpl);
     assert.equal(attempted.length, 1);
-    assert.equal(attempted[0], 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Floci%2Flist');
+    assert.equal(attempted[0], 'https://proxy.corsfix.com/?https://registrar.weybooru.com/loci/list');
     assert.deepEqual(result, [{ locationId: '1' }]);
 });
 
@@ -132,15 +132,15 @@ test('fetchViaThirdPartyProxies falls through to the next proxy when an earlier 
     const attempted = [];
     const fetchImpl = async (url) => {
         attempted.push(url);
-        if (url.includes('codetabs')) throw new Error('codetabs down');
+        if (url.includes('corsfix')) throw new Error('corsfix down');
         if (url.includes('allorigins')) return { ok: false, status: 429 };
-        return { ok: true, json: async () => [{ locationId: '2' }] }; // corsproxy.io
+        return { ok: true, json: async () => [{ locationId: '2' }] }; // codetabs
     };
     const result = await fetchViaThirdPartyProxies('https://registrar.weybooru.com/loci/list', 'Failed to fetch', fetchImpl);
     assert.equal(attempted.length, 3);
-    assert.ok(attempted[0].includes('codetabs'));
+    assert.ok(attempted[0].includes('corsfix'));
     assert.ok(attempted[1].includes('allorigins'));
-    assert.ok(attempted[2].includes('corsproxy.io'));
+    assert.ok(attempted[2].includes('codetabs'));
     assert.deepEqual(result, [{ locationId: '2' }]);
 });
 
@@ -150,9 +150,9 @@ test('fetchViaThirdPartyProxies throws one combined error (direct + every proxy)
         () => fetchViaThirdPartyProxies('https://registrar.weybooru.com/loci/list', 'Failed to fetch', fetchImpl),
         (error) => {
             assert.match(error.message, /direct: Failed to fetch/);
-            assert.match(error.message, /api\.codetabs\.com.*down/);
+            assert.match(error.message, /proxy\.corsfix\.com.*down/);
             assert.match(error.message, /api\.allorigins\.win.*down/);
-            assert.match(error.message, /corsproxy\.io.*down/);
+            assert.match(error.message, /api\.codetabs\.com.*down/);
             return true;
         },
     );
@@ -175,7 +175,7 @@ test('fetchWithCorsFallback falls back to the third-party proxy chain when direc
         return { ok: true, json: async () => [{ locationId: '1' }] };
     };
     const result = await fetchWithCorsFallback('https://registrar.weybooru.com/loci/list', { fetchImpl, proxyFetchImpl });
-    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Floci%2Flist');
+    assert.equal(proxyUrl, 'https://proxy.corsfix.com/?https://registrar.weybooru.com/loci/list');
     assert.deepEqual(result, [{ locationId: '1' }]);
 });
 
@@ -205,7 +205,7 @@ test('fetchLocationList falls back to the third-party proxy chain when direct fe
     let proxyUrl = null;
     const proxyFetchImpl = async (url) => { proxyUrl = url; return { ok: true, json: async () => [{ locationId: '9' }] }; };
     const result = await fetchLocationList('https://registrar.weybooru.com', fetchImpl, proxyFetchImpl);
-    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Floci%2Flist');
+    assert.equal(proxyUrl, 'https://proxy.corsfix.com/?https://registrar.weybooru.com/loci/list');
     assert.deepEqual(result, [{ locationId: '9' }]);
 });
 
@@ -214,6 +214,6 @@ test('fetchCollectionList falls back to the third-party proxy chain when direct 
     let proxyUrl = null;
     const proxyFetchImpl = async (url) => { proxyUrl = url; return { ok: true, json: async () => [{ collectionId: '3' }] }; };
     const result = await fetchCollectionList('https://registrar.weybooru.com', fetchImpl, proxyFetchImpl);
-    assert.equal(proxyUrl, 'https://api.codetabs.com/v1/proxy/?quest=https%3A%2F%2Fregistrar.weybooru.com%2Fcoll%2Flist');
+    assert.equal(proxyUrl, 'https://proxy.corsfix.com/?https://registrar.weybooru.com/coll/list');
     assert.deepEqual(result, [{ collectionId: '3' }]);
 });
